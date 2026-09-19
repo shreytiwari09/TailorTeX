@@ -25,6 +25,11 @@ export function EvidenceCard({ evidence, setEvidence, skills, setSkills, notes, 
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [draft, setDraftState] = useState(() => store.get('notesDraft', ''))
+  const setDraft = (v: string) => {
+    setDraftState(v)
+    store.set('notesDraft', v)
+  }
 
   const run = async (label: string, work: () => Promise<void>) => {
     setBusy(label)
@@ -66,6 +71,16 @@ export function EvidenceCard({ evidence, setEvidence, skills, setSkills, notes, 
   }
 
   const lines = noteLines(notes)
+  const draftLines = noteLines(draft)
+  const saveNotes = () => {
+    if (!draftLines.length) return
+    const fresh = draftLines.filter((l) => !lines.includes(l))
+    setNotes([...lines, ...fresh].join('\n'))
+    setDraft('')
+    setError(null)
+    setNote(fresh.length ? `Saved ${fresh.length} note${fresh.length === 1 ? '' : 's'}. They'll be used in your next run.` : 'Those are already saved.')
+  }
+  const removeNote = (i: number) => setNotes(lines.filter((_, j) => j !== i).join('\n'))
   const linkedinCount = evidence.filter((e) => e.source === 'linkedin').length
   const total = evidence.length + skills.length + lines.length
 
@@ -124,32 +139,59 @@ export function EvidenceCard({ evidence, setEvidence, skills, setSkills, notes, 
             <input ref={fileRef} type="file" accept=".pdf,application/pdf" hidden onChange={(e) => { readLinkedIn(e.target.files?.[0]); e.target.value = '' }} />
           </div>
 
-          <label className="field">
+          <div className="field">
             <span className="label-row">
               <span>Anything else about you</span>
-              {lines.length > 0 && <span className="muted small">{lines.length} fact{lines.length === 1 ? '' : 's'}</span>}
+              {lines.length > 0 && <span className="pill accent">{lines.length} saved</span>}
             </span>
             <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={5}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  saveNotes()
+                }
+              }}
+              rows={4}
               placeholder={
                 'One thing per line, in your own words. For example:\n' +
                 'At Finch Payments I also built Kafka consumers for settlement events\n' +
                 'Won 2nd place at DevHacks 2025 with a Flutter app\n' +
-                'Led the robotics club (12 members) in college\n' +
-                'You can paste LinkedIn posts here too.'
+                'Led the robotics club (12 members) in college'
               }
             />
-            <span className="hint">Say where something happened, so it lands under the right job. Numbers here can be used as written, never changed.</span>
-          </label>
+            <div className="row wrap gap-s">
+              <button type="button" className={draftLines.length ? 'btn' : 'btn secondary'} disabled={!draftLines.length} onClick={saveNotes}>
+                <Icon name="check" /> {draftLines.length ? `Save ${draftLines.length} line${draftLines.length === 1 ? '' : 's'}` : 'Save'}
+              </button>
+              <span className="hint">Ctrl/⌘ + Enter also saves. Say where something happened so it lands under the right job; numbers are used exactly as you write them.</span>
+            </div>
+          </div>
 
           {busy && <p className="status"><Spinner /> {busy}</p>}
           {error && <p className="status bad"><Icon name="alert" /> {error}</p>}
           {note && !error && <p className="status good"><Icon name="check" /> {note}</p>}
 
-          {(skills.length > 0 || evidence.length > 0) && (
+          {(skills.length > 0 || evidence.length > 0 || lines.length > 0) && (
             <div className="evidence-list">
+              {lines.length > 0 && (
+                <div className="ev-group">
+                  <div className="ev-group-head">
+                    <strong>Your notes</strong>
+                    <span className="muted small">{lines.length} saved</span>
+                    <button type="button" className="link" onClick={() => setNotes('')}>Remove all</button>
+                  </div>
+                  {lines.map((line, i) => (
+                    <div key={`${i}-${line}`} className="evidence-item">
+                      <div className="grow small">{line} <span className="muted">n{i + 1}</span></div>
+                      <button type="button" className="icon-btn" aria-label="Remove note" onClick={() => removeNote(i)}>
+                        <Icon name="trash" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {skills.length > 0 && (
                 <div className="ev-group">
                   <div className="ev-group-head">
