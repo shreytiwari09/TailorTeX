@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, streamTailor, type Config, type Evidence, type Outline, type ProgressEvent, type Result } from './api'
+import { api, detectProvider, streamTailor, type Config, type Evidence, type Outline, type ProgressEvent, type Result } from './api'
 import type { Decision } from './components/ChangeCard'
 import { EvidenceCard } from './components/EvidenceCard'
 import { Icon, Spinner } from './components/Icons'
@@ -22,7 +22,15 @@ export default function App() {
   // The key survives reloads in this tab always, and across browser restarts when "Remember" is on (the default).
   const [remember, setRemember] = useState(() => store.get('remember', true))
   const [apiKey, setApiKey] = useState(() => session.get('key', '') || (store.get('remember', true) ? store.get('key', '') : ''))
-  const [provider, setProvider] = useState<string | null>(null)
+  // A provider picked by hand (for keys whose format doesn't say); otherwise it's detected from the key.
+  const [providerChoice, setProviderChoice] = useState<string | null>(
+    () => session.get<string | null>('provider', null) ?? (store.get('remember', true) ? store.get<string | null>('provider', null) : null),
+  )
+  const provider = providerChoice ?? detectProvider(apiKey)
+  const changeKey = (k: string) => {
+    setApiKey(k)
+    setProviderChoice(null)
+  }
   const [model, setModel] = useState(() => store.get('model', ''))
 
   const [tex, setTex] = useState(() => store.get('tex', ''))
@@ -75,9 +83,15 @@ export default function App() {
   useEffect(() => {
     store.set('remember', remember)
     session.set('key', apiKey)
-    if (remember) store.set('key', apiKey)
-    else store.remove('key')
-  }, [remember, apiKey])
+    session.set('provider', providerChoice)
+    if (remember) {
+      store.set('key', apiKey)
+      store.set('provider', providerChoice)
+    } else {
+      store.remove('key')
+      store.remove('provider')
+    }
+  }, [remember, apiKey, providerChoice])
 
   // Parse the resume as it changes, to show what TailorTeX sees.
   useEffect(() => {
@@ -300,9 +314,10 @@ export default function App() {
             <ModelCard
               config={config}
               apiKey={apiKey}
-              setApiKey={setApiKey}
+              setApiKey={changeKey}
               provider={provider}
-              setProvider={setProvider}
+              providerChoice={providerChoice}
+              setProviderChoice={setProviderChoice}
               model={model}
               setModel={setModel}
               remember={remember}

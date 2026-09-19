@@ -7,7 +7,8 @@ type Props = {
   apiKey: string
   setApiKey: (k: string) => void
   provider: string | null
-  setProvider: (p: string | null) => void
+  providerChoice: string | null
+  setProviderChoice: (p: string | null) => void
   model: string
   setModel: (m: string) => void
   remember: boolean
@@ -16,22 +17,17 @@ type Props = {
 
 type Status = { kind: 'idle' | 'loading' | 'ok' | 'error'; message?: string }
 
-export function ModelCard({ config, apiKey, setApiKey, provider, setProvider, model, setModel, remember, setRemember }: Props) {
+export function ModelCard({ config, apiKey, setApiKey, provider, providerChoice, setProviderChoice, model, setModel, remember, setRemember }: Props) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [showKey, setShowKey] = useState(false)
-  const [override, setOverride] = useState(false)
+  const [showPicker, setShowPicker] = useState(false)
   const lastChecked = useRef('')
 
   const usingServerKey = !apiKey.trim() && !!config?.server_key
   const detected = detectProvider(apiKey)
   const effectiveProvider = usingServerKey ? config?.server_provider ?? null : provider
   const providerInfo = config?.providers.find((p) => p.id === effectiveProvider)
-
-  // Follow the key's detected provider unless the user picked one by hand.
-  useEffect(() => {
-    if (!override) setProvider(detected)
-  }, [detected, override, setProvider])
 
   // Check the key and load the live model list once the key and provider are known.
   useEffect(() => {
@@ -44,7 +40,7 @@ export function ModelCard({ config, apiKey, setApiKey, provider, setProvider, mo
     }
     if (k && !provider) {
       setModels([])
-      setStatus(k.length > 10 ? { kind: 'error', message: "Couldn't tell which provider this key is for. Pick it below." } : { kind: 'idle' })
+      setStatus(k.length > 10 ? { kind: 'error', message: "This key's format doesn't say which provider it's from. Pick the provider below." } : { kind: 'idle' })
       return
     }
     const sig = `${k}|${provider}`
@@ -113,17 +109,24 @@ export function ModelCard({ config, apiKey, setApiKey, provider, setProvider, mo
           Remember on this device
         </label>
         <span className="hint">{remember ? 'Saved in this browser only, never on our server.' : 'Kept until you close this tab.'}</span>
-        {apiKey.trim() && (
-          <button type="button" className="link" onClick={() => setOverride((o) => !o)}>
-            {override ? 'Detect provider from key' : 'Wrong provider?'}
+        {apiKey.trim() && detected && (
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              if (providerChoice || showPicker) setProviderChoice(null)
+              setShowPicker((o) => !(o || providerChoice))
+            }}
+          >
+            {providerChoice || showPicker ? 'Detect provider from key' : 'Wrong provider?'}
           </button>
         )}
       </div>
 
-      {apiKey.trim() && (override || !detected) && (
+      {apiKey.trim() && (showPicker || providerChoice || !detected) && (
         <label className="field">
           <span>Provider</span>
-          <select value={provider ?? ''} onChange={(e) => { setOverride(true); setProvider(e.target.value || null) }}>
+          <select value={provider ?? ''} onChange={(e) => setProviderChoice(e.target.value || null)}>
             <option value="">Choose…</option>
             {config?.providers.map((p) => (
               <option key={p.id} value={p.id}>{p.label}</option>
