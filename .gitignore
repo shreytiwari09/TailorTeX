@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Local config and runtime data
+.env
+data/
+*.log
+
+# LaTeX build leftovers
+*.aux
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Local notes kept out of the repo
+_prehackathon/
