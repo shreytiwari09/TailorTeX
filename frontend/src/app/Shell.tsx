@@ -70,7 +70,7 @@ export function Shell() {
                 <div className="absolute right-0 top-full mt-2 w-60 overflow-hidden rounded-xl border border-outline-variant/60 bg-surface-container-lowest shadow-xl">
                   <div className="border-b border-outline-variant/50 px-4 py-3">
                     <div className="truncate font-label-md text-label-md font-semibold text-on-surface">{name}</div>
-                    <div className="truncate font-body-sm text-body-sm text-on-surface-variant">{profile?.account.email}</div>
+                    <div className="truncate font-body-sm text-body-sm text-on-surface-variant">{profile?.account.demo ? 'Demo workspace' : profile?.account.email}</div>
                   </div>
                   <div className="p-1.5">
                     <MenuItem icon="tune" label="Settings" onClick={() => { setMenu(false); navigate('/settings') }} />
@@ -83,6 +83,12 @@ export function Shell() {
         </div>
       </header>
       <main className="mx-auto w-full max-w-[1200px] flex-1 px-gutter-mobile pb-space-2xl pt-[88px] md:px-gutter">
+        {profile?.account.demo && (
+          <div className="mb-space-lg flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-primary-container/10 px-4 py-2.5 font-body-sm text-body-sm text-on-surface">
+            <span className="flex items-center gap-2"><Icon name="science" className="text-[18px] text-primary" /> Demo workspace with a sample resume and background. It is deleted after two days.</span>
+            <button type="button" onClick={async () => { await signOut(); navigate('/') }} className="font-label-md text-label-md font-semibold text-primary hover:underline">Create a real account</button>
+          </div>
+        )}
         <Outlet />
       </main>
       <footer className="border-t border-outline-variant/40">

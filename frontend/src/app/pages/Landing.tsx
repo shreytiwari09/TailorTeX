@@ -13,6 +13,7 @@ export function Landing() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [demoBusy, setDemoBusy] = useState(false)
 
   const after = useCallback(
     (onboarded: boolean) => navigate(onboarded ? '/dashboard' : '/onboarding/about', { replace: true }),
@@ -27,7 +28,19 @@ export function Landing() {
     [auth, after, fail],
   )
 
-  if (auth.status === 'in' && auth.profile) return <Navigate to={auth.profile.onboarded ? '/dashboard' : '/onboarding/about'} replace />
+  const demo = async () => {
+    setDemoBusy(true)
+    setError(null)
+    try {
+      const { jd } = await auth.startDemo()
+      navigate('/new', { state: { jd } })
+    } catch (err) {
+      setDemoBusy(false)
+      fail(err)
+    }
+  }
+
+  if (auth.status === 'in' && auth.profile && !demoBusy) return <Navigate to={auth.profile.onboarded ? '/dashboard' : '/onboarding/about'} replace />
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -132,10 +145,16 @@ export function Landing() {
                 </>
               )}
               <span className="inline-flex items-center gap-1.5">
-                <a href="/demo.html?sample" className="py-1 font-label-sm text-label-sm text-secondary transition-colors hover:text-primary-container">
-                  Try the demo with a sample resume
-                </a>
-                <InfoTip>Explore with a sample resume and background. Nothing is saved.</InfoTip>
+                {auth.accounts ? (
+                  <button type="button" disabled={demoBusy} onClick={demo} className="py-1 font-label-sm text-label-sm text-secondary transition-colors hover:text-primary-container disabled:opacity-60">
+                    {demoBusy ? 'Opening the demo…' : 'Try the demo with a sample resume'}
+                  </button>
+                ) : (
+                  <a href="/demo.html?sample" className="py-1 font-label-sm text-label-sm text-secondary transition-colors hover:text-primary-container">
+                    Try the demo with a sample resume
+                  </a>
+                )}
+                <InfoTip>Opens a temporary workspace with a sample resume and background, so you can try the whole product. You bring your own model key. It is deleted after two days.</InfoTip>
               </span>
             </div>
 

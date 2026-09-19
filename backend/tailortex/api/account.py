@@ -130,6 +130,16 @@ async def auth_signup(body: SignUpIn, request: Request, response: Response, db: 
     return {"created": True, "profile": await repo.profile_payload(db, profile)}
 
 
+@router.post("/auth/demo")
+async def auth_demo(request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    """Open a temporary workspace with the sample resume and background (deleted after a couple of days)."""
+    core.rate_limit(request, "auth")
+    sample = await core.sample()
+    profile, token = await repo.start_demo(db, sample)
+    response.set_cookie(COOKIE, token, max_age=60 * 60 * 24 * repo.DEMO_DAYS, httponly=True, samesite="lax", secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https", path="/")
+    return {"created": True, "profile": await repo.profile_payload(db, profile), "jd": sample["jd"]}
+
+
 @router.post("/auth/signin")
 async def auth_signin(body: SignInIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
     core.rate_limit(request, "auth")

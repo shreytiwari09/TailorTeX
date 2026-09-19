@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +61,31 @@ async def sign_up(db: AsyncSession, email: str, password: str, full_name: str = 
     db.add(profile)
     await db.flush()
     return profile, await _new_session(db, profile)
+
+
+DEMO_DAYS = 2
+
+
+def is_demo(profile: Profile) -> bool:
+    return not (profile.email or profile.google_sub or profile.password_hash)
+
+
+async def start_demo(db: AsyncSession, sample: dict) -> tuple[Profile, str]:
+    """A temporary workspace with the sample resume and background, so the product can be tried without signing up."""
+    await purge_demos(db)
+    profile = Profile(full_name="Aarav Mehta", headline="Backend engineer", location="Bengaluru, India", resume_tex=sample["tex"], skills=sample["skills"], onboarded=True)
+    db.add(profile)
+    await db.flush()
+    await replace_source(db, profile, "github", [EvidenceItem(**e) for e in sample["evidence"]])
+    await set_notes(db, profile, sample["notes"])
+    return profile, await _new_session(db, profile)
+
+
+async def purge_demos(db: AsyncSession) -> int:
+    """Demo workspaces (no email, no password, no Google) are deleted after DEMO_DAYS days."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=DEMO_DAYS)
+    gone = await db.execute(delete(Profile).where(Profile.email.is_(None), Profile.google_sub.is_(None), Profile.password_hash.is_(None), Profile.created_at < cutoff))
+    return gone.rowcount or 0
 
 
 async def sign_in(db: AsyncSession, email: str, password: str) -> tuple[Profile, str]:
@@ -153,7 +178,7 @@ async def profile_payload(db: AsyncSession, profile: Profile) -> dict:
     )).all())
     return {
         "id": str(profile.id),
-        "account": {"email": profile.email, "google": bool(profile.google_sub), "password": bool(profile.password_hash), "avatar_url": profile.avatar_url},
+        "account": {"email": profile.email, "google": bool(profile.google_sub), "password": bool(profile.password_hash), "avatar_url": profile.avatar_url, "demo": is_demo(profile)},
         "details": {**{f: getattr(profile, f) for f in DETAIL_FIELDS}, "links": profile.links or {}},
         "resume_tex": profile.resume_tex,
         "notes": profile.notes,

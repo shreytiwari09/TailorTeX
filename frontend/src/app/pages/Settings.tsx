@@ -151,8 +151,8 @@ export function Settings() {
       <Section title="Account">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="truncate font-label-md text-label-md text-on-surface">{p.account.email}</div>
-            <div className="font-body-sm text-body-sm text-on-surface-variant">{p.account.google && p.account.password ? 'Signed in with Google or a password' : p.account.google ? 'Signed in with Google' : 'Signed in with email and password'}</div>
+            <div className="truncate font-label-md text-label-md text-on-surface">{p.account.demo ? 'Demo workspace' : p.account.email}</div>
+            <div className="font-body-sm text-body-sm text-on-surface-variant">{p.account.demo ? 'Temporary, with a sample resume. Deleted two days after it was created.' : p.account.google && p.account.password ? 'Signed in with Google or a password' : p.account.google ? 'Signed in with Google' : 'Signed in with email and password'}</div>
           </div>
           <Button variant="secondary" onClick={async () => { await signOut(); navigate('/') }}>Sign out</Button>
         </div>

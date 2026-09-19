@@ -11,6 +11,7 @@ type Auth = {
   signIn: (email: string, password: string) => Promise<Profile>
   signUp: (email: string, password: string, name: string) => Promise<Profile>
   signInGoogle: (credential: string) => Promise<Profile>
+  startDemo: () => Promise<{ profile: Profile; jd: string }>
   signOut: () => Promise<void>
 }
 
@@ -55,6 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: async (email, password) => done((await acct.signIn(email, password)).profile),
       signUp: async (email, password, name) => done((await acct.signUp(email, password, name)).profile),
       signInGoogle: async (credential) => done((await acct.google(credential)).profile),
+      startDemo: async () => {
+        const r = await acct.demo()
+        return { profile: done(r.profile), jd: r.jd }
+      },
       signOut: async () => {
         await acct.signOut().catch(() => undefined)
         setProfileState(null)

@@ -6,6 +6,7 @@ import { acct } from '../client'
 import { noteLines } from '../format'
 import { sourceOf } from '../knowledge'
 import { store } from '../storage'
+import { ModelEditor, type ModelChoice } from '../editors'
 import { Button, Card, Icon, InfoTip, Notice } from '../ui'
 
 // The pipeline's own stages, grouped into the steps a person cares about.
@@ -22,7 +23,7 @@ const STEPS = [
 type Stamped = ProgressEvent & { t: number }
 
 export function NewResume() {
-  const { profile } = useAuth()
+  const { profile, setProfile } = useAuth()
   const navigate = useNavigate()
   const start = (useLocation().state ?? {}) as { jd?: string; candidates?: 1 | 3 }
   const [jd, setJdState] = useState(() => start.jd ?? store.get('jd', ''))
@@ -38,6 +39,8 @@ export function NewResume() {
   const [error, setError] = useState<string | null>(null)
   const [template, setTemplate] = useState<string | null>(null)
   const [context, setContext] = useState<{ count: number; chips: string[] }>({ count: 0, chips: [] })
+  const [choice, setChoice] = useState<ModelChoice>({ key: '', provider: null, model: '', ready: false })
+  const [savingKey, setSavingKey] = useState(false)
   const abort = useRef<AbortController | null>(null)
   const started = useRef(0)
 
@@ -59,6 +62,19 @@ export function NewResume() {
   const words = jd.trim() ? jd.trim().split(/\s+/).length : 0
   const hasModel = !!profile?.model.key_saved
   const canRun = !!profile?.resume_tex.trim() && words >= 15 && !running
+
+  const saveKey = async () => {
+    setSavingKey(true)
+    setError(null)
+    try {
+      await acct.saveModel({ provider: choice.provider, model: choice.model || null, key: choice.key })
+      setProfile(await acct.profile())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the key.')
+    } finally {
+      setSavingKey(false)
+    }
+  }
 
   const run = async () => {
     abort.current?.abort()
@@ -98,7 +114,16 @@ export function NewResume() {
       </header>
 
       {!profile?.resume_tex.trim() && <Notice tone="warn" className="mb-space-md">You haven't added your reference resume yet. <Link to="/settings" className="font-semibold underline">Add it in Settings</Link>.</Notice>}
-      {profile?.resume_tex.trim() && !hasModel && <Notice tone="warn" className="mb-space-md">No model key saved. <Link to="/settings" className="font-semibold underline">Add one in Settings</Link>, unless this server provides its own.</Notice>}
+      {profile?.resume_tex.trim() && !hasModel && (
+        <Card className="mb-space-md p-space-lg">
+          <div className="mb-space-sm flex items-center gap-2 font-headline-sm text-headline-sm text-on-surface">
+            <Icon name="key" className="text-[20px] text-primary-container" /> Add your model key
+            <InfoTip>TailorTeX uses your own key from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. It is stored encrypted in your account and only used for your requests. Gemini and Groq have free tiers. If this server provides its own key you can skip this.</InfoTip>
+          </div>
+          <ModelEditor saved={profile.model} onChange={setChoice} />
+          <div className="mt-space-md flex justify-end"><Button loading={savingKey} disabled={!choice.ready || !choice.key} onClick={saveKey}>Save key</Button></div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 items-start gap-space-xl lg:grid-cols-12">
         <section className="flex flex-col gap-space-lg lg:col-span-7">

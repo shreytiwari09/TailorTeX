@@ -141,6 +141,16 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 
 **Docker:** `docker compose up --build` starts `pgvector/pgvector:pg17` and the app (TeX Live, poppler, and the embedding model baked in so the first search doesn't download 130 MB). `make dev` starts the same database for local development.
 
+## 13. The demo opens the real app
+
+**Found by the user:** "Try the demo" still went to the classic single-page app (dark, all inputs on one screen), which looks nothing like the Stitch design. I had kept it as the guest demo and left it un-restyled, so the first thing a judge might click was the one screen that didn't match.
+
+**Fix:** `POST /api/auth/demo` creates a temporary profile (no email, no password) holding the sample resume, a sample GitHub entry and two notes, marked as onboarded, and signs it in with a two-day cookie. The landing button calls it and opens the New tailoring screen with the sample job description filled in, so the whole product is one interface. The model key is asked for right there ("Add your model key", also shown to anyone signed in without one), because a demo without a key can't run. A banner says it is a demo workspace that is deleted after two days.
+
+**Why a real profile and not a browser-only mode inside the new UI:** the new screens are written against the account API, so a demo profile reuses every one of them with nothing duplicated, and the demo exercises the same storage, ranking and validators as the product. Demo profiles are found by having no email, password or Google ID and are deleted when a server starts and whenever a new demo is opened. A test covers the flow, that a real account can't see a demo's data, and the expiry.
+
+The old page (`/demo.html`) stays only as a fallback for when the server has no database.
+
 ## Test status
 
-104 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+105 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

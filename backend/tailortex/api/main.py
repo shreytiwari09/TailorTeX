@@ -61,6 +61,13 @@ async def lifespan(_app: FastAPI):
         try:
             await db_engine.init_db()
             log.info("Accounts and storage: PostgreSQL")
+            from ..db import repo
+
+            async with db_engine.sessions()() as db:
+                gone = await repo.purge_demos(db)
+                await db.commit()
+            if gone:
+                log.info("Removed %d expired demo workspaces", gone)
         except Exception:
             log.exception("Couldn't reach the database; accounts are off until it's back")
     yield

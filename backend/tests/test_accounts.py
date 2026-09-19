@@ -70,6 +70,21 @@ def db_rows(sql: str, **params):
     return asyncio.run(go())
 
 
+def db_exec(sql: str):
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    async def go():
+        eng = create_async_engine(TEST_DB)
+        try:
+            async with eng.begin() as conn:
+                await conn.execute(text(sql))
+        finally:
+            await eng.dispose()
+
+    asyncio.run(go())
+
+
 # --- accounts ------------------------------------------------------------------------------------
 
 
@@ -309,3 +324,35 @@ def test_secret_is_generated_and_kept_when_app_secret_is_unset(monkeypatch, tmp_
 
     with _pytest.raises(RuntimeError):
         crypto.encrypt("x")
+
+
+# --- demo workspace ---------------------------------------------------------------------------------
+
+
+@needs_db
+def test_demo_workspace_is_prefilled_private_and_expires(client):
+    r = client.post("/api/auth/demo")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    profile = body["profile"]
+    assert profile["account"]["demo"] is True and profile["account"]["email"] is None
+    assert profile["onboarded"] and "\\documentclass" in profile["resume_tex"] and len(body["jd"].split()) > 30
+    entries = client.get("/api/profile/context").json()["entries"]
+    assert {e["source"] for e in entries} >= {"github", "fact"}
+    assert client.get("/api/auth/me").json()["profile"]["account"]["demo"] is True
+
+    old_cookie = client.cookies.get("tt_session")
+
+    # a real account is not a demo, and can't see the demo workspace
+    client.post("/api/auth/signout")
+    signup(client, "real@example.com", "long enough pw")
+    assert client.get("/api/auth/me").json()["profile"]["account"]["demo"] is False
+    assert client.get("/api/profile/context").json()["entries"] == []
+
+    # a demo older than two days is deleted the next time a demo is started; accounts with an email are kept
+    db_exec("update profiles set created_at = now() - interval '3 days'")
+    client.post("/api/auth/signout")
+    assert client.post("/api/auth/demo").status_code == 200
+    assert db_rows("select count(*) from profiles")[0][0] == 2  # the real account and the new demo
+    client.cookies.set("tt_session", old_cookie)
+    assert client.get("/api/auth/me").json()["signed_in"] is False

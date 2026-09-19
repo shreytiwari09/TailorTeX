@@ -29,7 +29,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export type Links = { linkedin?: string; github?: string; portfolio?: string; other?: string }
 export type Profile = {
   id: string
-  account: { email: string | null; google: boolean; password: boolean; avatar_url: string | null }
+  account: { email: string | null; google: boolean; password: boolean; avatar_url: string | null; demo: boolean }
   details: { full_name: string; headline: string; location: string; phone: string; public_email: string; links: Links }
   resume_tex: string
   notes: string
@@ -62,6 +62,7 @@ export const acct = {
   signUp: (email: string, password: string, full_name: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/signup', { email, password, full_name }),
   signIn: (email: string, password: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/signin', { email, password }),
   google: (credential: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/google', { credential }),
+  demo: () => req<{ created: boolean; profile: Profile; jd: string }>('POST', '/api/auth/demo'),
   signOut: () => req<{ ok: boolean }>('POST', '/api/auth/signout'),
 
   profile: () => req<Profile>('GET', '/api/profile'),

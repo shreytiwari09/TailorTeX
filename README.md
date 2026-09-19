@@ -6,7 +6,7 @@ Set up your profile once (your resume, your GitHub, portfolio, LinkedIn and note
 
 Built for **HackDevengers 2.0** (19–20 September 2026).
 
-**Try it without signing up:** run the app and click *Try the demo with a sample resume* on the landing page.
+**Try it without signing up:** run the app and click *Try the demo with a sample resume* on the landing page. It opens the real app in a temporary workspace with a sample resume and background; you only add your own model key. Demo workspaces are deleted after two days.
 
 ---
 
@@ -53,7 +53,7 @@ Open http://localhost:5173, create an account, and follow the four setup steps. 
 docker compose up --build    # or: make docker     then open http://localhost:8000
 ```
 
-No configuration is needed. The secret that encrypts saved model keys is generated on first start and kept in the data volume; set `APP_SECRET` in `.env` for a hosted deployment where that volume doesn't persist. Without a database the app still runs in no-login demo mode.
+No configuration is needed. The secret that encrypts saved model keys is generated on first start and kept in the data volume; set `APP_SECRET` in `.env` for a hosted deployment where that volume doesn't persist. Without a database the app falls back to a simpler no-login demo page that keeps everything in the browser.
 
 | Command | What it does |
 |---|---|
@@ -126,7 +126,7 @@ backend/
   tests/        pytest, including real LaTeX compiles, a mock-model pipeline run and a real PostgreSQL
 frontend/
   src/app/      the product: routes, sign-in state, Tailwind design tokens, the screens
-  src/          the no-login demo (its own entry, demo.html)
+  src/          the simple no-database demo page (its own entry, demo.html)
 docs/           product plan, development log, frontend design brief
 ```
 
@@ -146,7 +146,7 @@ Signed in (session cookie):
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/auth/signup`, `/signin`, `/google`, `/signout`; `GET /api/auth/me`, `/config` | Accounts |
+| `POST /api/auth/signup`, `/signin`, `/google`, `/demo`, `/signout`; `GET /api/auth/me`, `/config` | Accounts |
 | `GET/PUT /api/profile`, `PUT /api/profile/resume`, `/model`, `/notes`, `/skills`; `DELETE /api/profile` | Your details, reference resume, encrypted model key, notes, skills; delete everything |
 | `GET /api/profile/context`; `POST /api/profile/context/links`, `/linkedin`; `PATCH`/`DELETE /api/profile/context/{id}` | Your knowledge base |
 | `POST /api/runs` (streamed), `GET /api/runs`, `GET/DELETE /api/runs/{id}`, `POST /api/runs/{id}/rebuild` | Tailor from your stored profile and context; history |
@@ -162,7 +162,8 @@ Signed in (session cookie):
 | Sessions | An HttpOnly cookie in your browser; PostgreSQL keeps only a hash of the token | 30 days, or until you sign out |
 | Style memory and strategy statistics | `data/` on the server (a Docker volume), under your anonymous profile ID | Deleted with your account (the anonymous strategy totals stay) |
 | LinkedIn PDF and web pages you point it at | Server memory while they are read; only the extracted entries are kept | Discarded straight away |
-| **No-login demo** | Your browser only (`localStorage`) | Until you clear it |
+| **Demo workspace** ("Try the demo") | The same tables, as a profile with no email or password, holding the sample resume. Your model key, if you add one, is encrypted like any other | Deleted automatically two days after it is created |
+| **No-database fallback demo** | Your browser only (`localStorage`) | Until you clear it |
 
 Your resume, job description and context are sent to the model provider you choose, and your GitHub username to GitHub's public API. Nothing else leaves the server, and request bodies are never logged. **Delete my account** in Settings removes everything above.
 
