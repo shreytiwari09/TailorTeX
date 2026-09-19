@@ -118,7 +118,7 @@ def metrics(text: str, words: bool = True) -> list[tuple[str, float, str]]:
     return out
 
 
-def _metric_allowed(value: float, cls: str, allowed: list[tuple[str, float, str]]) -> bool:
+def metric_allowed(value: float, cls: str, allowed: list[tuple[str, float, str]]) -> bool:
     for _s, v, c in allowed:
         same_class = c == cls or {c, cls} <= {"n", "money"}
         if same_class and abs(v - value) <= 1e-9 * max(1.0, abs(v)):
@@ -353,7 +353,7 @@ def _check_text(
         return "invented_term", f"{', '.join(repr(w) for w in invented[:5])} {_be(invented)} supported by {where}.{hint}"
 
     allowed_numbers = metrics(number_pool)
-    bad_numbers = [s for s, v, c in metrics(plain) if not _metric_allowed(v, c, allowed_numbers)]
+    bad_numbers = [s for s, v, c in metrics(plain) if not metric_allowed(v, c, allowed_numbers)]
     if bad_numbers:
         return "invented_number", (
             f"{', '.join(repr(n) for n in bad_numbers[:5])} {'doesn' if len(bad_numbers) == 1 else 'don'}'t come from "

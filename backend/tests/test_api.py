@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from conftest import MockLLM
 from test_pipeline_learn import ANALYSIS, GOOD_PLAN
 from tailortex.api import main
-from tailortex.api.github import clean_readme
+from tailortex.evidence.github import clean_readme
 from tailortex.compile.compile import tex_available
 
 

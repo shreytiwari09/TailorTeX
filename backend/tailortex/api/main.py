@@ -33,7 +33,9 @@ from ..llm.providers import PROVIDERS, detect_provider, recommended_model
 from ..ops import Op
 from ..pipeline.tailor import TailorError, TailorInput, rebuild, tailor
 from ..types import EvidenceItem, JobAnalysis
-from .github import GitHubError, import_repos, list_repos
+from ..evidence.extract import extract_plain, extract_with_model
+from ..evidence.github import GitHubError, import_repos, list_repos
+from ..evidence.sources import SourceError, fetch_page, html_to_text, pdf_to_text
 
 ROOT = Path(__file__).resolve().parents[3]
 PKG = Path(__file__).resolve().parents[1]
@@ -64,7 +66,7 @@ MAX_JD = 40_000
 # --- rate limiting (per client IP, in memory) ------------------------------------------
 
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
-LIMITS = {"tailor": (8, 60), "compile": (40, 60), "github": (20, 60), "models": (30, 60), "feedback": (60, 60)}
+LIMITS = {"tailor": (8, 60), "compile": (40, 60), "github": (20, 60), "evidence": (12, 60), "models": (30, 60), "feedback": (60, 60)}
 
 
 def rate_limit(request: Request, bucket: str) -> None:
@@ -126,6 +128,13 @@ class RebuildRequest(BaseModel):
 class GitHubRequest(BaseModel):
     username: str = Field(max_length=39)
     repos: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ProfileRequest(KeyRequest):
+    kind: str = Field(pattern="^(linkedin|portfolio)$")
+    pdf_base64: str | None = Field(default=None, max_length=7_000_000)
+    text: str | None = Field(default=None, max_length=60_000)
+    url: str | None = Field(default=None, max_length=500)
 
 
 class Decision(BaseModel):
@@ -375,6 +384,49 @@ async def github_repos(req: GitHubRequest, request: Request):
         return {"repos": await list_repos(req.username)}
     except GitHubError as e:
         raise HTTPException(400, str(e)) from None
+
+
+@app.post("/api/evidence/profile")
+async def profile_evidence(req: ProfileRequest, request: Request):
+    """LinkedIn (its "Save to PDF" export, or pasted text) or a portfolio (URL or pasted text) -> evidence items."""
+    rate_limit(request, "evidence")
+    url = None
+    try:
+        if req.text and req.text.strip():
+            text = req.text.strip()[:30_000]
+        elif req.kind == "linkedin" and req.pdf_base64:
+            try:
+                data = base64.b64decode(req.pdf_base64, validate=False)
+            except ValueError:
+                raise HTTPException(400, "That file couldn't be read.") from None
+            text = pdf_to_text(data)
+        elif req.kind == "portfolio" and req.url:
+            url, page = await fetch_page(req.url)
+            text = html_to_text(page)
+        else:
+            raise HTTPException(400, "Upload your LinkedIn PDF, give your portfolio's address, or paste the text.")
+    except SourceError as e:
+        raise HTTPException(400, str(e)) from None
+    if len(text) < 80:
+        hint = " Your portfolio may be built with JavaScript that we can't run; paste its text instead." if req.kind == "portfolio" else ""
+        raise HTTPException(400, "There's almost no text to read there." + hint)
+
+    prefix = "li" if req.kind == "linkedin" else "pf"
+    has_key = bool((req.key or "").strip() or server_key()[0])
+    if not has_key:
+        items = extract_plain(text, req.kind, prefix, url)
+        return {"evidence": [e.model_dump() for e in items], "used_model": False, "chars": len(text),
+                "note": "Split into paragraphs without a model. Add a model key in step 1 for a cleaner breakdown into roles, projects and skills."}
+    llm = make_llm(req)
+    try:
+        if not llm.model:
+            llm.model = recommended_model(llm.provider, [m.id for m in await llm.list_models()]) or ""
+        items = await extract_with_model(llm, text, req.kind, prefix, url)
+    except LLMError as e:
+        items = extract_plain(text, req.kind, prefix, url)
+        return {"evidence": [e_.model_dump() for e_ in items], "used_model": False, "chars": len(text),
+                "note": f"The model couldn't read it ({e}), so it was split into paragraphs instead."}
+    return {"evidence": [e.model_dump() for e in items], "used_model": True, "chars": len(text), "note": None}
 
 
 @app.post("/api/feedback")

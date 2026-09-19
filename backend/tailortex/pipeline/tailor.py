@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 
 from ..ats.coverage import Gap, coverage_scores, gap_analysis, term_coverage, title_alignment
 from ..ats.health import health_score, lint_source, parse_health
-from ..ats.terms import count_term, same_term
+from ..ats.terms import contains_term, count_term, same_term
 from ..compile.compile import CompileResult, UnsafeLatexError, compile_async, detect_engine, tex_available
 from ..latex.apply import ApplyError, apply_ops
 from ..latex.parse import ParsedResume, parse_resume
@@ -339,8 +339,33 @@ def keyword_table(before: list, after: list, gaps: list[Gap]) -> list[dict]:
     return rows
 
 
+def background_suggestions(doc: ParsedResume, tailored: ParsedResume, analysis: JobAnalysis, evidence: list[EvidenceItem], ops: list[Op]) -> list[dict]:
+    """Items from the user's background (GitHub, LinkedIn, portfolio, facts, skills) that cover job keywords
+    the original resume didn't have: which were used in this version, and which are still worth adding."""
+    before_text = doc.plain_text()
+    after_text = tailored.plain_text()
+    cited = {e for op in ops for e in op.evidence}
+    out = []
+    for ev in evidence:
+        text = ev.full_text()
+        covers = [(t.term, must) for t, must in analysis.terms() if contains_term(text, t.term) or any(same_term(sk, t.term) for sk in ev.skills)]
+        new = [(term, must) for term, must in covers if not contains_term(before_text, term)]
+        if not new:
+            continue
+        out.append({
+            "id": ev.id, "title": ev.title, "source": ev.source, "url": ev.url,
+            "added": [term for term, _ in new if contains_term(after_text, term)],
+            "still_missing": [term for term, _ in new if not contains_term(after_text, term)],
+            "must": [term for term, must in new if must],
+            "cited": ev.id in cited,
+        })
+    out.sort(key=lambda x: (-len(x["still_missing"]) - len(x["added"]), -len(x["must"])))
+    return out
+
+
 def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: list[Gap], before: Metrics, before_cov: list,
-                 best: Candidate, cands: list[Candidate], ctx: str, llm: LLMClient, page_limit: int, warnings: list[str]) -> dict:
+                 best: Candidate, cands: list[Candidate], ctx: str, llm: LLMClient, page_limit: int, warnings: list[str],
+                 evidence: list[EvidenceItem] | None = None) -> dict:
     compiled = best.compiled
     blocked = [
         {"attempt": att, "arm": best.arm, "op": v.op.describe(), "rule": v.rule, "message": v.message, "text": v.op.text, "retried": att < best.attempts}
@@ -367,6 +392,7 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         "ops": [o.model_dump() for o in best.ops],
         "blocked": blocked,
         "left_out": left_out,
+        "suggestions": background_suggestions(doc, parse_resume(best.tex), analysis, evidence or [], best.ops),
         "fit_note": best.fit_note,
         "tex": best.tex,
         "pdf": base64.b64encode(compiled.pdf).decode() if compiled and compiled.ok and compiled.pdf else None,
@@ -451,7 +477,7 @@ async def tailor(inp: TailorInput, llm: LLMClient, emit: Emit = _noop, bandit: B
         if isinstance(r, LLMError):
             warnings.append(f"One strategy failed: {r}")
     best = max(cands, key=lambda c: (c.reward, -len(c.violations)))
-    result = build_result(run_id, doc, analysis, gaps, before, before_cov, best, cands, ctx, llm, page_limit, warnings)
+    result = build_result(run_id, doc, analysis, gaps, before, before_cov, best, cands, ctx, llm, page_limit, warnings, inp.evidence)
     await emit(_event("done", "done", f"Done. Must-have coverage {before.must_have:.0%} → {best.metrics.must_have:.0%}"))
     return result
 
