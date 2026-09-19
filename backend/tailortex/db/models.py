@@ -14,23 +14,41 @@ EMBEDDING_DIMS = 384
 
 
 class Base(DeclarativeBase):
-    pass
+    # Read database-filled columns (timestamps) back on insert: async sessions can't lazy-load them later.
+    __mapper_args__ = {"eager_defaults": True}
 
 
 class Profile(Base):
-    """One person: their resume, background and notes. Email and password are optional (added to keep it for good)."""
+    """One person: account, personal details, reference resume, model settings, notes and confirmed skills.
+
+    Details that rarely change live in plain columns; the searchable background lives in evidence_items.
+    """
 
     __tablename__ = "profiles"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    full_name: Mapped[str] = mapped_column(Text, default="")
+    # account
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     password_hash: Mapped[str | None] = mapped_column(String(300))
+    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    # personal details
+    full_name: Mapped[str] = mapped_column(Text, default="")
+    headline: Mapped[str] = mapped_column(Text, default="")
+    location: Mapped[str] = mapped_column(Text, default="")
+    phone: Mapped[str] = mapped_column(String(60), default="")
+    public_email: Mapped[str] = mapped_column(String(320), default="")
+    links: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # reference resume and context
     resume_tex: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     skills: Mapped[list] = mapped_column(JSONB, default=list)
-    links: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # model: the key is encrypted with the server's APP_SECRET and never sent back to the browser
+    model_provider: Mapped[str | None] = mapped_column(String(40))
+    model_name: Mapped[str | None] = mapped_column(String(200))
+    model_key_enc: Mapped[str | None] = mapped_column(Text)
+    onboarded: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Session(Base):
@@ -71,6 +89,7 @@ class Run(Base):
     job_title: Mapped[str] = mapped_column(Text, default="")
     company: Mapped[str | None] = mapped_column(Text)
     jd: Mapped[str] = mapped_column(Text, default="")
+    source_tex: Mapped[str] = mapped_column(Text, default="")  # the reference resume the edits apply to (for rebuilds)
     tex: Mapped[str] = mapped_column(Text, default="")
     pdf: Mapped[bytes | None] = mapped_column(LargeBinary)
     result: Mapped[dict] = mapped_column(JSONB, default=dict)

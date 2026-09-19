@@ -13,6 +13,7 @@ import logging
 import os
 import time
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -22,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..ats.health import apply_lint_fix, document_class, lint_source
+from ..db import engine as db_engine
 from ..compile.compile import UnsafeLatexError, compile_async, detect_engine, missing_tex_files, tex_available
 from ..latex.parse import parse_resume
 from ..learn.bandit import Bandit
@@ -53,7 +55,22 @@ except ImportError:  # pragma: no cover
 log = logging.getLogger("tailortex")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-app = FastAPI(title="TailorTeX", version="0.1.0", description="Tailor a LaTeX resume to a job description without breaking the template or inventing anything.")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if db_engine.enabled():
+        try:
+            await db_engine.init_db()
+            log.info("Accounts and storage: PostgreSQL")
+        except Exception:
+            log.exception("Couldn't reach the database; accounts are off until it's back")
+    yield
+    await db_engine.dispose()
+
+
+app = FastAPI(
+    title="TailorTeX", version="0.2.0", lifespan=lifespan,
+    description="Tailor a LaTeX resume to a job description without breaking the template or inventing anything.",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o for o in os.environ.get("TAILORTEX_CORS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o],
@@ -68,7 +85,7 @@ MAX_JD = 40_000
 # --- rate limiting (per client IP, in memory) ------------------------------------------
 
 _hits: dict[tuple[str, str], deque] = defaultdict(deque)
-LIMITS = {"tailor": (8, 60), "compile": (40, 60), "github": (20, 60), "evidence": (12, 60), "models": (30, 60), "feedback": (60, 60)}
+LIMITS = {"auth": (20, 60), "tailor": (8, 60), "compile": (40, 60), "github": (20, 60), "evidence": (12, 60), "models": (30, 60), "feedback": (60, 60)}
 
 
 def rate_limit(request: Request, bucket: str) -> None:
@@ -326,22 +343,22 @@ async def compile_endpoint(req: TexRequest, request: Request):
     return {**r.summary(), "pdf": base64.b64encode(r.pdf).decode() if r.pdf else None, "log_tail": r.log_tail[-1500:] if not r.ok else ""}
 
 
-@app.post("/api/tailor")
-async def tailor_endpoint(req: TailorRequest, request: Request):
-    rate_limit(request, "tailor")
-    llm = make_llm(req)
-    if not llm.model:
-        try:
-            ids = [m.id for m in await llm.list_models()]
-        except LLMError as e:
-            raise HTTPException(401 if e.kind == "auth" else 502, str(e)) from None
-        llm.model = recommended_model(llm.provider, ids) or ""
-    if not req.jd.strip():
-        raise HTTPException(400, "Paste the job description.")
-    inp = TailorInput(
-        tex=req.tex, jd=req.jd, evidence=evidence_with_skills(req.evidence, req.skills, req.notes),
-        candidates=req.candidates, compile_pdf=req.compile, page_limit=req.page_limit, user=req.user,
-    )
+async def ensure_model(llm: LLMClient) -> None:
+    """Pick the provider's recommended model when none was chosen."""
+    if llm.model:
+        return
+    try:
+        ids = [m.id for m in await llm.list_models()]
+    except LLMError as e:
+        raise HTTPException(401 if e.kind == "auth" else 502, str(e)) from None
+    llm.model = recommended_model(llm.provider, ids) or ""
+
+
+def stream_tailoring(inp: TailorInput, llm: LLMClient, ranker=None, on_result=None) -> StreamingResponse:
+    """Run a tailoring and stream its progress as server-sent events; the last event is the result.
+
+    on_result(result) may add to the result (for example the saved run's ID) before it's sent.
+    """
     queue: asyncio.Queue = asyncio.Queue()
 
     async def emit(event: dict) -> None:
@@ -349,7 +366,14 @@ async def tailor_endpoint(req: TailorRequest, request: Request):
 
     async def run() -> None:
         try:
-            await queue.put(await tailor(inp, llm, emit))
+            result = await tailor(inp, llm, emit, ranker=ranker)
+            if on_result is not None:
+                try:
+                    await on_result(result)
+                except Exception:
+                    log.exception("Saving the run failed")
+                    result.setdefault("warnings", []).append("This resume couldn't be saved to your history.")
+            await queue.put(result)
         except LLMError as e:
             await queue.put({"type": "error", "kind": e.kind, "message": str(e)})
         except (TailorError, UnsafeLatexError) as e:
@@ -379,6 +403,21 @@ async def tailor_endpoint(req: TailorRequest, request: Request):
                 task.cancel()
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/tailor")
+async def tailor_endpoint(req: TailorRequest, request: Request):
+    """The guest (stateless) tailoring: everything comes in the request, nothing is stored."""
+    rate_limit(request, "tailor")
+    llm = make_llm(req)
+    await ensure_model(llm)
+    if not req.jd.strip():
+        raise HTTPException(400, "Paste the job description.")
+    inp = TailorInput(
+        tex=req.tex, jd=req.jd, evidence=evidence_with_skills(req.evidence, req.skills, req.notes),
+        candidates=req.candidates, compile_pdf=req.compile, page_limit=req.page_limit, user=req.user,
+    )
+    return stream_tailoring(inp, llm)
 
 
 @app.post("/api/rebuild")
@@ -570,6 +609,13 @@ async def forget(req: ForgetRequest):
 @app.get("/api/learning")
 async def learning():
     return {"bandit": Bandit().stats()}
+
+
+# --- signed-in product routes (accounts, profile, context, saved resumes) ---------------------
+
+from . import account  # noqa: E402  (it uses helpers defined above)
+
+app.include_router(account.router)
 
 
 # --- the built frontend (production: `make start`) ----------------------------------------------

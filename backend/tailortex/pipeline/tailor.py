@@ -21,6 +21,7 @@ from typing import Awaitable, Callable
 
 from ..ats.coverage import Gap, coverage_scores, gap_analysis, term_coverage, title_alignment
 from ..ats.health import health_score, lint_source, parse_health
+from ..ats.recommend import recommendations
 from ..ats.terms import contains_term, count_term, same_term
 from ..compile.compile import CompileResult, UnsafeLatexError, compile_async, detect_engine, tex_available
 from ..latex.apply import ApplyError, apply_ops
@@ -377,7 +378,7 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         {"term": gp.term, "must": gp.must, "weight": gp.weight}
         for gp in gaps if gp.status == "missing"
     ]
-    return {
+    result = {
         "type": "result",
         "run_id": run_id,
         "arm": best.arm,
@@ -404,6 +405,8 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         "usage": {"provider": llm.provider, "model": llm.model, "input_tokens": llm.usage.input_tokens, "output_tokens": llm.usage.output_tokens, "calls": llm.usage.calls},
         "warnings": warnings + best.warnings,
     }
+    result["recommendations"] = recommendations(result, {e.id: e.title or e.text[:40] for e in evidence or []})
+    return result
 
 
 async def tailor(

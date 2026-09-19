@@ -241,3 +241,32 @@ def test_lint_pasted_from_overleaf():
     assert "includegraphics" not in apply_lint_fix(multi, "images")
     # glyphtounicode is a TeX Live file, not a project file
     assert not {"partial", "multi_file", "images"} & {i.id for i in lint_source(parse_resume(JAKE), "pdflatex")}
+
+
+def test_recommendations_from_measured_results():
+    from tailortex.ats.recommend import recommendations
+
+    result = {
+        "analysis": {"title": "Data Scientist"},
+        "page_limit": 1,
+        "after": {"pages": 1, "page_fill": 0.55, "title": 0.0,
+                  "checks": [{"id": "contact", "label": "Contact details readable", "ok": False, "detail": "Missing near the top: phone"}]},
+        "keywords": [
+            {"term": "Kubernetes", "must": True, "after": "missing", "evidence_ids": ["li2"], "in_pdf": None},
+            {"term": "Terraform", "must": True, "after": "missing", "evidence_ids": [], "in_pdf": None},
+            {"term": "Python", "must": True, "after": "listed", "evidence_ids": [], "in_pdf": True},
+            {"term": "Go", "must": False, "after": "context", "evidence_ids": [], "in_pdf": True},
+        ],
+        "suggestions": [{"id": "gh-chat", "title": "chatrelay", "still_missing": ["WebSockets"], "must": [], "cited": False}],
+    }
+    recs = recommendations(result, {"li2": "Software Engineer at Finch"})
+    by_title = {r["title"]: r for r in recs}
+    assert recs[0]["priority"] == "high"
+    assert by_title["Fix: Contact details readable"]["action"] == "fix_source"
+    assert by_title["Add Kubernetes from your context"]["evidence"] == ["li2"] and "Software Engineer at Finch" in by_title["Add Kubernetes from your context"]["detail"]
+    assert by_title["Do you have Terraform?"]["action"] == "confirm_skill"
+    assert "Show Python in a bullet" in by_title
+    assert any(t.startswith("Your titles don't match") for t in by_title)
+    assert any(t.startswith("Room for more") for t in by_title)
+    assert "Use “chatrelay”" in by_title
+    assert not any("Go" == r["term"] for r in recs)
