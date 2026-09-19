@@ -11,6 +11,7 @@ the request only and is never logged or included in error messages.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -95,6 +96,11 @@ class LLMClient:
                 raise LLMError("Couldn't reach Anthropic. Check your connection.", "network") from None
         async with httpx.AsyncClient(timeout=30.0) as http:
             try:
+                if self.provider == "openrouter":
+                    # OpenRouter's model list is public, so check the key itself first.
+                    check = await http.get(f"{self.info.base_url}/key", headers=self._headers())
+                    if check.status_code != 200:
+                        raise _http_error(self.info.label, check)
                 r = await http.get(f"{self.info.base_url}/models", headers=self._headers())
             except httpx.HTTPError:
                 raise LLMError(f"Couldn't reach {self.info.label}. Check your connection.", "network") from None
@@ -109,8 +115,8 @@ class LLMClient:
             label = m.get("name") or m.get("display_name") or mid
             pricing = m.get("pricing") or {}
             try:
-                p_in = float(pricing["prompt"]) * 1e6 if "prompt" in pricing else None
-                p_out = float(pricing["completion"]) * 1e6 if "completion" in pricing else None
+                p_in = round(float(pricing["prompt"]) * 1e6, 4) if "prompt" in pricing else None
+                p_out = round(float(pricing["completion"]) * 1e6, 4) if "completion" in pricing else None
             except (TypeError, ValueError):
                 p_in = p_out = None
             models.append(ModelInfo(mid, str(label), p_in, p_out))
@@ -159,8 +165,6 @@ class LLMClient:
                     body.pop("response_format")  # some models don't support JSON mode; the prompt still asks for JSON
                     continue
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                    import asyncio
-
                     await asyncio.sleep(2 * (attempt + 1))
                     continue
                 break
@@ -260,7 +264,9 @@ def _http_error(label: str, r: httpx.Response) -> LLMError:
     except ValueError:
         msg = r.text
     msg = _scrub(str(msg))[:300]
-    if r.status_code in (401, 403) or "api key" in msg.lower() and "invalid" in msg.lower():
+    low = msg.lower()
+    bad_key = ("api key" in low or "api_key" in low) and any(w in low for w in ("invalid", "not valid", "valid api key", "incorrect", "expired"))
+    if r.status_code in (401, 403) or bad_key:
         return LLMError(f"{label} rejected the key. Check that it's correct and active.", "auth")
     if r.status_code == 404:
         return LLMError(f"That {label} model isn't available to this key.", "bad_request")
