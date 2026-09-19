@@ -201,10 +201,10 @@ export const api = {
 }
 
 /** POST to /api/tailor and read the server-sent events as they arrive. */
-export async function streamTailor(body: unknown, onEvent: (e: StreamEvent) => void, signal: AbortSignal): Promise<void> {
+export async function streamTailor(body: unknown, onEvent: (e: StreamEvent) => void, signal: AbortSignal, url = '/api/tailor'): Promise<void> {
   let res: Response
   try {
-    res = await fetch('/api/tailor', {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
