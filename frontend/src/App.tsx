@@ -51,6 +51,15 @@ export default function App() {
 
   useEffect(() => {
     api.config().then(setConfig).catch((e: Error) => setConfigError(e.message))
+    // A link ending in ?sample opens the app with the sample resume, job and evidence loaded.
+    if (new URLSearchParams(window.location.search).has('sample')) {
+      api.sample().then((s) => {
+        setTex(s.tex)
+        setJd(s.jd)
+        setEvidence(s.evidence)
+        setSkills(s.skills)
+      }).catch((e: Error) => setError(e.message))
+    }
   }, [])
 
   // Keep inputs across reloads. The key is kept only when the user asks.

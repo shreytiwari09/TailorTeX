@@ -1,0 +1,15 @@
+services:
+  tailortex:
+    build: .
+    image: tailortex
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - tailortex-data:/data
+    restart: unless-stopped
+
+volumes:
+  tailortex-data:

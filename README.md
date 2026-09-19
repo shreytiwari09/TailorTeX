@@ -37,7 +37,13 @@ make setup   # Python venv + backend deps, frontend deps, creates .env
 make dev     # backend on :8000, frontend on http://localhost:5173
 ```
 
-Open http://localhost:5173, click **Try it with a sample resume**, paste a model key in step 1 and press **Tailor my resume**. Gemini and Groq have free tiers. To give everyone who uses your server a default key, set `TAILORTEX_API_KEY` in `.env`.
+**Or with Docker** (no Python, Node or LaTeX needed; the image includes TeX Live):
+
+```sh
+docker compose up --build    # or: make docker
+```
+
+Open http://localhost:5173 (http://localhost:8000 with Docker), click **Try it with a sample resume**, paste a model key in step 1 and press **Tailor my resume**. Gemini and Groq have free tiers. To give everyone who uses your server a default key, set `TAILORTEX_API_KEY` in `.env`.
 
 Other commands:
 

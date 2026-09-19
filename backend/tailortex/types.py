@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class EvidenceItem(BaseModel):
@@ -24,6 +24,15 @@ class EvidenceItem(BaseModel):
 class JobTerm(BaseModel):
     term: str
     weight: int = Field(default=2, ge=1, le=3, description="3 = central to the role, 1 = mentioned in passing")
+
+    @field_validator("weight", mode="before")
+    @classmethod
+    def _clamp(cls, v):
+        """Models sometimes answer 0, 5 or "high"; keep it in 1..3."""
+        try:
+            return max(1, min(3, round(float(v))))
+        except (TypeError, ValueError):
+            return {"high": 3, "medium": 2, "low": 1}.get(str(v).strip().lower(), 2)
 
 
 class JobAnalysis(BaseModel):

@@ -3,13 +3,14 @@
 #   make dev     run the backend (:8000) and frontend (:5173) together, with reload
 #   make start   build the frontend and serve the whole app from the backend on :8000
 #   make test    backend tests, frontend type-check and lint
+#   make docker  build and run everything (including TeX Live) in Docker on :8000
 
 PYTHON ?= $(shell command -v python3.12 || command -v python3.11 || command -v python3)
 VENV   := .venv
 BIN    := $(VENV)/bin
 PORT   ?= 8000
 
-.PHONY: setup dev start test backend frontend check-tex
+.PHONY: setup dev start test docker backend frontend check-tex
 
 setup: $(BIN)/uvicorn frontend/node_modules check-tex
 	@test -f .env || cp .env.example .env
@@ -52,3 +53,7 @@ start: $(BIN)/uvicorn frontend/node_modules
 test: $(BIN)/uvicorn frontend/node_modules
 	cd backend && ../$(BIN)/pytest -q
 	cd frontend && npx tsc -b && npx oxlint src
+
+docker:
+	@test -f .env || cp .env.example .env
+	docker compose up --build

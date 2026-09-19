@@ -4,9 +4,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..ops import Op
+
+_OP_ALIASES = {
+    "replace": "rewrite", "edit": "rewrite", "update": "rewrite", "modify": "rewrite", "rephrase": "rewrite",
+    "insert": "add", "add_bullet": "add", "addbullet": "add", "append": "add", "new": "add",
+    "remove": "drop", "delete": "drop", "drop_bullet": "drop",
+    "move": "reorder", "reorder_bullets": "reorder", "sort": "reorder",
+    "reorder_projects": "reorder_entries", "reorderentries": "reorder_entries",
+    "remove_entry": "drop_entry", "delete_entry": "drop_entry", "dropentry": "drop_entry",
+}
+
+
+def clean_id(value: str) -> str:
+    """Model replies sometimes wrap IDs in brackets or quotes: "[s1.e0.b2]" -> "s1.e0.b2"."""
+    return value.strip().strip("[]()'\"` ").strip()
 
 
 class PlanOp(BaseModel):
@@ -18,10 +32,25 @@ class PlanOp(BaseModel):
     evidence: list[str] | None = Field(default=None, description="Evidence IDs that support new terms or numbers")
     reason: str = Field(default="", description="One short sentence: why this helps for this job")
 
+    @field_validator("op", mode="before")
+    @classmethod
+    def _normalize_op(cls, v):
+        if isinstance(v, str):
+            key = v.strip().lower().replace("-", "_").replace(" ", "_")
+            return _OP_ALIASES.get(key, key)
+        return v
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason(cls, v):
+        return v or ""
+
     def to_op(self) -> Op:
         return Op(
-            op=self.op, target=self.target.strip(), text=self.text, after=self.after, order=self.order,
-            evidence=[e.strip() for e in (self.evidence or [])], reason=self.reason, source="model",
+            op=self.op, target=clean_id(self.target), text=self.text,
+            after=clean_id(self.after) if self.after else None,
+            order=[clean_id(x) for x in self.order] if self.order else None,
+            evidence=[clean_id(e) for e in (self.evidence or []) if clean_id(e)], reason=self.reason, source="model",
         )
 
 

@@ -165,6 +165,16 @@ def _fit_candidate(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> O
     return Op(op="drop", target=best[1], reason="Removed to keep the page limit: the least relevant bullet for this job.", source="fit")
 
 
+def normalize_ops(doc: ParsedResume, ops: list[Op]) -> list[Op]:
+    """Small, safe fixes to model output: a skills line's text shouldn't repeat its label."""
+    for op in ops:
+        if op.op == "rewrite" and op.text:
+            b = doc.block(op.target)
+            if b and b.kind == "skills" and b.label:
+                op.text = re.sub(r"^\s*\**\s*" + re.escape(b.label) + r"\s*\**\s*:\s*\**\s*", "", op.text, flags=re.IGNORECASE)
+    return ops
+
+
 def _apply_safely(doc: ParsedResume, ops: list[Op]) -> tuple[str, list[Op], list[str]]:
     try:
         return apply_ops(doc, ops), ops, []
@@ -197,7 +207,7 @@ async def _run_candidate(
         attempts = attempt
         await emit(_event("plan", "start", f"[{arm}] Planning edits" + (f" (retry {attempt - 1})" if attempt > 1 else "")))
         plan = await llm.complete(system, message, Plan)
-        ops = [p.to_op() for p in plan.ops]
+        ops = normalize_ops(doc, [p.to_op() for p in plan.ops])
         result = validate_ops(ops, vctx)
         valid = result.valid
         for v in result.violations:
