@@ -99,6 +99,7 @@ export type Result = {
   ops: Op[]
   blocked: Blocked[]
   left_out: { term: string; must: boolean; weight: number }[]
+  suggestions: Suggestion[]
   fit_note: string | null
   tex: string
   pdf: string | null
@@ -108,6 +109,17 @@ export type Result = {
   usage: { provider: string; model: string; input_tokens: number; output_tokens: number; calls: number }
   warnings: string[]
 }
+export type Suggestion = {
+  id: string
+  title: string
+  source: EvidenceSource
+  url: string | null
+  added: string[]
+  still_missing: string[]
+  must: string[]
+  cited: boolean
+}
+export type ProfileResult = { evidence: Evidence[]; used_model: boolean; chars: number; note: string | null }
 export type ProgressEvent = {
   type: 'progress'
   stage: string
@@ -170,6 +182,8 @@ export const api = {
       { username },
     ),
   githubImport: (username: string, repos: string[]) => request<{ evidence: Evidence[] }>('/api/evidence/github', { username, repos }),
+  profile: (body: { kind: 'linkedin' | 'portfolio'; pdf_base64?: string; text?: string; url?: string; key: string | null; provider: string | null; model: string | null }) =>
+    request<ProfileResult>('/api/evidence/profile', body),
   rebuild: (body: unknown) => request<RebuildResult>('/api/rebuild', body),
   feedback: (body: unknown) => request<{ reward: number; style_rules: string[] | null }>('/api/feedback', body),
 }

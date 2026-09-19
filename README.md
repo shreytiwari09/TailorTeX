@@ -21,7 +21,7 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **Always compiles.** The model never writes LaTeX. It returns edit operations in plain text, and TailorTeX writes the LaTeX itself with an escaper that can't produce broken markup.
 - **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from evidence you provided. Rejected edits go back to the model with the reason.
 - **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it, not on a made-up score.
-- **Evidence you control.** Import your public GitHub repos, list skills you can defend, or add facts. Job keywords without evidence are shown to you, never slipped in.
+- **Knows your background.** Add your LinkedIn (the PDF LinkedIn exports), your portfolio page, your GitHub projects, skills you can defend and facts. Your model breaks them into roles, projects and skills, each checked against the source, and TailorTeX suggests what's worth adding for each job. Job keywords with no proof are asked about, never slipped in.
 - **Review everything.** Word-level diff for every change with the reason and evidence behind it. Keep, revert or edit each one, then rebuild the PDF.
 - **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live.
 - **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each user's writing style.
@@ -49,7 +49,7 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `make test` | 73 backend tests (including real LaTeX compiles), frontend type-check and lint |
+| `make test` | 86 backend tests (including real LaTeX compiles), frontend type-check and lint |
 | `make start` | Build the frontend and serve the whole app from the backend on :8000 |
 | API docs | http://localhost:8000/docs (interactive, from FastAPI) |
 
@@ -108,8 +108,9 @@ backend/
     learn/      strategy arms, Thompson-sampling bandit, feedback reward, style memory
     pipeline/   the tailoring run and the rebuild after review
     reward/     the reward function (layer 0 of the learning loop)
-    api/        FastAPI app (REST + server-sent events) and GitHub evidence import
-  tests/        pytest: 73 tests, including real LaTeX compiles and a mock-model pipeline run
+    evidence/   background sources: GitHub, LinkedIn PDF, portfolio pages, verified extraction
+    api/        FastAPI app (REST + server-sent events)
+  tests/        pytest: 86 tests, including real LaTeX compiles and a mock-model pipeline run
 frontend/       React + Vite + TypeScript single-page app
 docs/           product plan and development log
 ```
@@ -125,6 +126,7 @@ docs/           product plan and development log
 | `POST /api/tailor` | The full run, streamed as server-sent events; the last event is the result |
 | `POST /api/rebuild` | Re-apply the changes you kept or edited, recompile and re-measure |
 | `POST /api/evidence/github` | List a user's public repos, or import chosen ones as evidence |
+| `POST /api/evidence/profile` | LinkedIn PDF or text, or a portfolio URL or text, broken into verified evidence items |
 | `POST /api/feedback` | Keep / revert / edit decisions: rewards the bandit and updates style memory |
 
 ## Security and privacy

@@ -324,7 +324,13 @@ export default function App() {
               setRemember={setRemember}
             />
             <ResumeCard key={resumeKey} tex={tex} setTex={setTex} outline={outline} parsing={parsing} parseError={parseError} onFix={fixLint} onTemplate={loadTemplate} />
-            <EvidenceCard evidence={evidence} setEvidence={setEvidence} skills={skills} setSkills={setSkills} />
+            <EvidenceCard
+              evidence={evidence}
+              setEvidence={setEvidence}
+              skills={skills}
+              setSkills={setSkills}
+              llm={{ key: apiKey.trim() || null, provider: apiKey.trim() ? provider : null, model: model || null }}
+            />
             <JobCard
               jd={jd}
               setJd={setJd}

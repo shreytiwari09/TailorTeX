@@ -86,6 +86,16 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 
 **Bug fixed on the way:** the paste box used to disappear after the first character typed into it.
 
+## 9. "About you": LinkedIn, portfolio, GitHub, skills and facts
+
+**What:** Step 3 became "About you", the context TailorTeX uses to suggest what each job's resume should include. Five sources: LinkedIn, portfolio, GitHub, skills you can defend, and facts. After a run, a Suggestions tab lists what from your background matches the job: what this version added, what could still be added, and job keywords nothing backs up ("Do you have these?").
+
+**Decisions:**
+- **LinkedIn through its own PDF export, not a profile link.** LinkedIn blocks apps from reading profiles and its terms forbid scraping. "Save to PDF" on a profile is one click and official; pasting the profile text works too.
+- **Portfolio pages are fetched safely.** Only http(s); every host (including redirects) is resolved first and private, loopback, link-local and cloud-metadata addresses are refused, so a URL can't be used to probe the server's network. Pages rendered entirely by JavaScript can be pasted as text instead.
+- **Extraction can't invent either.** The user's model splits the text into roles, projects, achievements and skills, and then every item is checked against the source: sentences with numbers or names the source doesn't contain are dropped, and so are skills it doesn't mention. Without a key, the text is split into paragraphs with known skills picked out, and the app says so.
+- **Evidence scope carries over:** LinkedIn items describe your roles and can back bullets anywhere; portfolio and GitHub items back projects, the summary and skills lines.
+
 ## Test status
 
-73 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.
+86 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.

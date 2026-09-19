@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Keyword, Metrics, Result, TermStatus } from '../api'
+import type { Keyword, Metrics, Result, Suggestion, TermStatus } from '../api'
 import { base64ToBlob, pct } from '../util'
 import { ChangeCard, type Decision } from './ChangeCard'
 import { Icon, Spinner } from './Icons'
@@ -23,7 +23,7 @@ type Props = {
   onOverleaf: () => void
 }
 
-type Tab = 'changes' | 'keywords' | 'guardrails' | 'pdf' | 'latex'
+type Tab = 'changes' | 'suggestions' | 'keywords' | 'guardrails' | 'pdf' | 'latex'
 
 const STATUS: Record<TermStatus, { label: string; cls: string }> = {
   context: { label: 'In bullets', cls: 'good' },
@@ -134,6 +134,7 @@ export function Results(props: Props) {
 
       <div className="tabs" role="tablist">
         <TabButton id="changes" tab={tab} setTab={setTab} label={`Changes (${result.changes.length})`} />
+        <TabButton id="suggestions" tab={tab} setTab={setTab} label={`Suggestions (${result.suggestions.length})`} />
         <TabButton id="keywords" tab={tab} setTab={setTab} label="Keywords" />
         <TabButton id="guardrails" tab={tab} setTab={setTab} label={`Guardrails (${result.blocked.length + result.left_out.length})`} />
         <TabButton id="pdf" tab={tab} setTab={setTab} label="PDF" />
@@ -148,6 +149,8 @@ export function Results(props: Props) {
           ))}
         </div>
       )}
+
+      {tab === 'suggestions' && <SuggestionList suggestions={result.suggestions} leftOut={result.left_out} skills={props.skills} onConfirm={props.onConfirmSkill} />}
 
       {tab === 'keywords' && <KeywordTable keywords={result.keywords} skills={props.skills} onConfirm={props.onConfirmSkill} evidenceLabels={evidenceLabels} />}
 
@@ -306,6 +309,69 @@ function KeywordTable({ keywords, skills, onConfirm, evidenceLabels }: { keyword
         </tbody>
       </table>
       <p className="hint">In bullets = used in context (what recruiters and semantic screeners reward). Skills only = listed but not shown in use.</p>
+    </div>
+  )
+}
+
+const SOURCE: Record<string, string> = { linkedin: 'LinkedIn', portfolio: 'Portfolio', github: 'GitHub', fact: 'Fact', skill: 'Skills' }
+
+function SuggestionList({ suggestions, leftOut, skills, onConfirm }: { suggestions: Suggestion[]; leftOut: Result['left_out']; skills: string[]; onConfirm: (t: string) => void }) {
+  const unconfirmed = leftOut.filter((k) => !skills.some((s) => s.toLowerCase() === k.term.toLowerCase()))
+  return (
+    <div className="stack">
+      <div className="card">
+        <h3><Icon name="spark" /> From your background</h3>
+        <p className="muted small">
+          Projects, roles and skills from your LinkedIn, portfolio, GitHub and facts that match this job but weren't on your resume.
+        </p>
+        {suggestions.length === 0 && (
+          <p className="muted">Nothing from your background adds new keywords for this job. Add your LinkedIn, portfolio or GitHub in step 3 to get suggestions.</p>
+        )}
+        {suggestions.map((s) => (
+          <div key={s.id} className="suggestion">
+            <div className="row wrap gap-s">
+              <span className="pill">{SOURCE[s.source] ?? s.source}</span>
+              <strong>{s.id === 'skills' ? 'Skills you confirmed' : s.title || s.id}</strong>
+              {s.url && <a className="muted small" href={s.url} target="_blank" rel="noreferrer"><Icon name="external" /></a>}
+              {s.cited && <span className="pill accent">used in this version</span>}
+            </div>
+            {s.added.length > 0 && (
+              <div className="chips">
+                <span className="muted small">Added:</span>
+                {s.added.map((t) => <span key={t} className="chip gap-present">{t}{s.must.includes(t) && <span className="must-dot" />}</span>)}
+              </div>
+            )}
+            {s.still_missing.length > 0 && (
+              <div className="chips">
+                <span className="muted small">Could still add:</span>
+                {s.still_missing.map((t) => <span key={t} className="chip gap-evidence">{t}{s.must.includes(t) && <span className="must-dot" />}</span>)}
+              </div>
+            )}
+            {s.still_missing.length > 0 && (
+              <p className="hint">
+                {s.source === 'github' || s.source === 'portfolio'
+                  ? 'Worth a spot in Projects. Try "Best of 3", which includes the evidence-first strategy, or add it yourself in Overleaf.'
+                  : 'Try "Best of 3", which includes the evidence-first strategy, or mention it yourself.'}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      {unconfirmed.length > 0 && (
+        <div className="card">
+          <h3><Icon name="target" /> Do you have these?</h3>
+          <p className="muted small">The job asks for these and nothing in your resume or background shows them. Only confirm the ones you could talk about in an interview.</p>
+          <div className="chips">
+            {unconfirmed.map((k) => (
+              <span key={k.term} className="chip gap-missing">
+                {k.term}
+                {k.must && <span className="must-dot" />}
+                <button type="button" className="chip-action" onClick={() => onConfirm(k.term)}>I have this</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

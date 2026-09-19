@@ -797,6 +797,49 @@ textarea.paste-box:focus {
   color: var(--muted);
   font-size: 0.8rem;
 }
+.tab-count {
+  margin-left: 6px;
+  font-size: 0.7rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ev-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ev-group + .ev-group {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.ev-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ev-group-head .link {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+.ev-skills {
+  color: var(--accent);
+}
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.suggestion:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.suggestion .chips {
+  align-items: center;
+}
 .evidence-list {
   display: flex;
   flex-direction: column;
