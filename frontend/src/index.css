@@ -656,15 +656,6 @@ textarea.code,
 
 /* --- resume card ----------------------------------------------------------------- */
 
-.dropzone {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-  padding: 12px;
-  border: 1.5px dashed var(--border);
-  border-radius: 12px;
-}
 .parse-summary {
   display: flex;
   flex-wrap: wrap;
@@ -703,6 +694,53 @@ textarea.code,
 }
 .outline-line.locked {
   color: var(--muted);
+}
+
+.copy-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.86rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+kbd {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: nowrap;
+}
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+textarea.paste-box {
+  border-style: dashed;
+  border-width: 1.5px;
+}
+textarea.paste-box:focus {
+  border-style: solid;
+}
+.loaded-resume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+.loaded-resume > .icon {
+  color: var(--accent);
+  width: 1.3em;
+  height: 1.3em;
 }
 
 /* --- evidence card ------------------------------------------------------------------- */

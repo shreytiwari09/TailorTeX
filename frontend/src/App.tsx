@@ -8,7 +8,7 @@ import { ModelCard } from './components/ModelCard'
 import { Progress } from './components/Progress'
 import { ResumeCard } from './components/ResumeCard'
 import { Results, type View } from './components/Results'
-import { base64ToBlob, deviceId, downloadBlob, openInOverleaf, plain, store } from './util'
+import { base64ToBlob, deviceId, downloadBlob, openInOverleaf, plain, session, store } from './util'
 
 const REPO_URL = 'https://github.com/shreytiwari09/TailorTex'
 
@@ -19,8 +19,9 @@ export default function App() {
   const [config, setConfig] = useState<Config | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
 
-  const [remember, setRemember] = useState(() => store.get('remember', false))
-  const [apiKey, setApiKey] = useState(() => (store.get('remember', false) ? store.get('key', '') : ''))
+  // The key survives reloads in this tab always, and across browser restarts when "Remember" is on (the default).
+  const [remember, setRemember] = useState(() => store.get('remember', true))
+  const [apiKey, setApiKey] = useState(() => session.get('key', '') || (store.get('remember', true) ? store.get('key', '') : ''))
   const [provider, setProvider] = useState<string | null>(null)
   const [model, setModel] = useState(() => store.get('model', ''))
 
@@ -44,6 +45,7 @@ export default function App() {
   const [built, setBuilt] = useState('[]')
   const [rebuilding, setRebuilding] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [resumeKey, setResumeKey] = useState(0) // remounts the resume card after the sample loads
 
   const abortRef = useRef<AbortController | null>(null)
   const feedbackSent = useRef<string | null>(null)
@@ -55,6 +57,7 @@ export default function App() {
     if (new URLSearchParams(window.location.search).has('sample')) {
       api.sample().then((s) => {
         setTex(s.tex)
+        setResumeKey((k) => k + 1)
         setJd(s.jd)
         setEvidence(s.evidence)
         setSkills(s.skills)
@@ -71,6 +74,7 @@ export default function App() {
   useEffect(() => store.set('candidates', candidates), [candidates])
   useEffect(() => {
     store.set('remember', remember)
+    session.set('key', apiKey)
     if (remember) store.set('key', apiKey)
     else store.remove('key')
   }, [remember, apiKey])
@@ -101,6 +105,7 @@ export default function App() {
     try {
       const s = await api.sample()
       setTex(s.tex)
+      setResumeKey((k) => k + 1)
       setJd(s.jd)
       setEvidence(s.evidence)
       setSkills(s.skills)
@@ -303,7 +308,7 @@ export default function App() {
               remember={remember}
               setRemember={setRemember}
             />
-            <ResumeCard tex={tex} setTex={setTex} outline={outline} parsing={parsing} parseError={parseError} onFix={fixLint} onTemplate={loadTemplate} />
+            <ResumeCard key={resumeKey} tex={tex} setTex={setTex} outline={outline} parsing={parsing} parseError={parseError} onFix={fixLint} onTemplate={loadTemplate} />
             <EvidenceCard evidence={evidence} setEvidence={setEvidence} skills={skills} setSkills={setSkills} />
             <JobCard
               jd={jd}

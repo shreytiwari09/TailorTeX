@@ -72,6 +72,20 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 - **Missing keywords are a question, not a silent add:** "I have this" adds the term to the user's confirmed skills for the next run.
 - **Checked in a real browser** with headless Chrome driving the full flow (sample → run → review → revert → rebuild, desktop and phone widths) against a scripted model: no console errors.
 
+## 8. Paste from Overleaf, and keys that survive a reload
+
+**What:** Step 2 now leads with pasting LaTeX copied from Overleaf (a paste box, three short copy steps, and a "Paste from clipboard" button); uploading a `.tex` file is a secondary link. The model key is kept for the browser tab across reloads, and on the device when "Remember on this device" is on (now the default).
+
+**Why:** Almost nobody has their resume as a `.tex` file on disk; it lives in an Overleaf project. And the key vanished whenever the page reloaded, because it was only saved when "Remember" was ticked.
+
+**Checks for pasted resumes** (warnings with a plain fix):
+- Only part of the file was copied (no `\documentclass` or `\end{document}`).
+- The resume loads other files from its Overleaf project (`\input{sections/...}`), which a single paste doesn't include.
+- An image (`\includegraphics`) that isn't here; one click removes it.
+- A custom document class (such as Awesome-CV's `.cls`) that isn't in TeX Live, checked with `kpsewhich`; the `.tex` is still tailored, and the PDF can be compiled in Overleaf.
+
+**Bug fixed on the way:** the paste box used to disappear after the first character typed into it.
+
 ## Test status
 
-72 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.
+73 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.

@@ -42,30 +42,37 @@ export function wordDiff(before: string, after: string): DiffPart[] {
 export const plain = (s: string) => s.replace(/\*\*/g, '')
 
 // Browser storage can be unavailable (private windows, blocked site data), so every access is guarded.
-export const store = {
-  get<T>(key: string, fallback: T): T {
-    try {
-      const raw = localStorage.getItem(`tailortex:${key}`)
-      return raw === null ? fallback : (JSON.parse(raw) as T)
-    } catch {
-      return fallback
-    }
-  },
-  set(key: string, value: unknown) {
-    try {
-      localStorage.setItem(`tailortex:${key}`, JSON.stringify(value))
-    } catch {
-      /* storage unavailable */
-    }
-  },
-  remove(key: string) {
-    try {
-      localStorage.removeItem(`tailortex:${key}`)
-    } catch {
-      /* storage unavailable */
-    }
-  },
+function makeStore(area: () => Storage) {
+  return {
+    get<T>(key: string, fallback: T): T {
+      try {
+        const raw = area().getItem(`tailortex:${key}`)
+        return raw === null ? fallback : (JSON.parse(raw) as T)
+      } catch {
+        return fallback
+      }
+    },
+    set(key: string, value: unknown) {
+      try {
+        area().setItem(`tailortex:${key}`, JSON.stringify(value))
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    remove(key: string) {
+      try {
+        area().removeItem(`tailortex:${key}`)
+      } catch {
+        /* storage unavailable */
+      }
+    },
+  }
 }
+
+/** Kept on this device until cleared. */
+export const store = makeStore(() => localStorage)
+/** Kept for this browser tab, across reloads, until the tab is closed. */
+export const session = makeStore(() => sessionStorage)
 
 /** An anonymous ID for this browser, so the learning loop can personalize without an account. */
 export function deviceId(): string {

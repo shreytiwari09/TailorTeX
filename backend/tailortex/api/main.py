@@ -21,8 +21,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from ..ats.health import apply_lint_fix, lint_source
-from ..compile.compile import UnsafeLatexError, compile_async, detect_engine, tex_available
+from ..ats.health import apply_lint_fix, document_class, lint_source
+from ..compile.compile import UnsafeLatexError, compile_async, detect_engine, missing_tex_files, tex_available
 from ..latex.parse import parse_resume
 from ..learn.bandit import Bandit
 from ..learn.feedback import change_reward, run_reward
@@ -178,6 +178,18 @@ def evidence_with_skills(evidence: list[EvidenceItem], skills: list[str]) -> lis
     return items
 
 
+def lint(doc, tex: str, engine: str) -> list[dict]:
+    issues = [i.to_dict() for i in lint_source(doc, engine)]
+    cls = document_class(tex)
+    if cls and missing_tex_files([f"{cls}.cls"]):
+        issues.append({
+            "id": "custom_class", "severity": "warn", "fixable": False,
+            "message": f"Your resume uses the '{cls}' class, which lives in a separate file in your Overleaf project. "
+            "TailorTeX can still tailor it, but can't compile the PDF here; open the result in Overleaf to compile it.",
+        })
+    return issues
+
+
 def outline(tex: str) -> dict:
     doc = parse_resume(tex)
     engine = detect_engine(tex)
@@ -203,7 +215,7 @@ def outline(tex: str) -> dict:
             "bullets": sum(len(e.bullets) for s in doc.sections for e in s.entries),
             "editable": len(doc.editable_blocks()),
         },
-        "lint": [i.to_dict() for i in lint_source(doc, engine)],
+        "lint": lint(doc, tex, engine),
     }
 
 

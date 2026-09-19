@@ -104,9 +104,52 @@ class LintIssue:
         return asdict(self)
 
 
+# \input files that come with TeX Live rather than from the user's project
+_SYSTEM_INPUTS = {"glyphtounicode", "glyphtounicode.tex"}
+_INPUT_RE = re.compile(r"\\(?:input|include|subfile)\s*\{\s*([^}]+?)\s*\}|\\import\s*\{([^}]*)\}\s*\{([^}]+)\}")
+_GRAPHICS_RE = re.compile(r"\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
+
+
+def project_files(doc: ParsedResume) -> list[str]:
+    """Files the resume pulls in from its Overleaf project, which a single pasted file won't include."""
+    names = []
+    for m in _INPUT_RE.finditer(doc.masked):
+        name = (m.group(1) or ((m.group(2) or "") + (m.group(3) or ""))).strip()
+        if name and name not in _SYSTEM_INPUTS:
+            names.append(name)
+    return list(dict.fromkeys(names))
+
+
+def document_class(source: str) -> str | None:
+    m = re.search(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}", source)
+    return m.group(1).strip() if m else None
+
+
 def lint_source(doc: ParsedResume, engine: str) -> list[LintIssue]:
     s = doc.masked
     issues: list[LintIssue] = []
+    if not re.search(r"\\documentclass", s) or not re.search(r"\\begin\s*\{document\}", s) or not re.search(r"\\end\s*\{document\}", s):
+        issues.append(LintIssue(
+            "partial", "warn",
+            "This looks like only part of your resume. In Overleaf, click inside the editor, press Ctrl+A (Cmd+A on a Mac) "
+            "to select the whole file, from \\documentclass to \\end{document}, then copy and paste again.",
+        ))
+    files = project_files(doc)
+    if files:
+        shown = ", ".join(files[:4]) + ("…" if len(files) > 4 else "")
+        issues.append(LintIssue(
+            "multi_file", "warn",
+            f"Your resume loads other files from its Overleaf project ({shown}), and only this file was pasted, so those parts are missing. "
+            "Open each file in Overleaf and paste its contents in place of its \\input line.",
+        ))
+    images = [m.group(1) for m in _GRAPHICS_RE.finditer(s)]
+    if images:
+        issues.append(LintIssue(
+            "images", "warn",
+            f"Your resume includes an image ({images[0]}) that isn't here, so it won't compile. Photos and logos also confuse ATS parsers. "
+            "Remove it to compile here.",
+            fixable=True,
+        ))
     if engine == "pdflatex" and not re.search(r"\\pdfgentounicode\s*=?\s*1", s):
         issues.append(LintIssue(
             "glyphtounicode", "warn",
@@ -130,6 +173,8 @@ def lint_source(doc: ParsedResume, engine: str) -> list[LintIssue]:
 
 def apply_lint_fix(source: str, fix_id: str) -> str:
     """Apply a one-click fix to the source. Unknown fixes return the source unchanged."""
+    if fix_id == "images":
+        return _GRAPHICS_RE.sub("", source)
     if fix_id == "glyphtounicode":
         m = re.search(r"\\begin\s*\{document\}", source)
         if not m:

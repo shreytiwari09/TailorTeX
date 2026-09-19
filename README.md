@@ -43,13 +43,13 @@ make dev     # backend on :8000, frontend on http://localhost:5173
 docker compose up --build    # or: make docker
 ```
 
-Open http://localhost:5173 (http://localhost:8000 with Docker), click **Try it with a sample resume**, paste a model key in step 1 and press **Tailor my resume**. Gemini and Groq have free tiers. To give everyone who uses your server a default key, set `TAILORTEX_API_KEY` in `.env`.
+Open http://localhost:5173 (http://localhost:8000 with Docker), click **Try it with a sample resume**, paste a model key in step 1 and press **Tailor my resume**. To use your own resume, copy its LaTeX from Overleaf (click in the editor, Ctrl/Cmd+A, Ctrl/Cmd+C) and paste it into step 2. Gemini and Groq have free tiers. To give everyone who uses your server a default key, set `TAILORTEX_API_KEY` in `.env`.
 
 Other commands:
 
 | Command | What it does |
 |---|---|
-| `make test` | 72 backend tests (including real LaTeX compiles), frontend type-check and lint |
+| `make test` | 73 backend tests (including real LaTeX compiles), frontend type-check and lint |
 | `make start` | Build the frontend and serve the whole app from the backend on :8000 |
 | API docs | http://localhost:8000/docs (interactive, from FastAPI) |
 
@@ -109,7 +109,7 @@ backend/
     pipeline/   the tailoring run and the rebuild after review
     reward/     the reward function (layer 0 of the learning loop)
     api/        FastAPI app (REST + server-sent events) and GitHub evidence import
-  tests/        pytest: 72 tests, including real LaTeX compiles and a mock-model pipeline run
+  tests/        pytest: 73 tests, including real LaTeX compiles and a mock-model pipeline run
 frontend/       React + Vite + TypeScript single-page app
 docs/           product plan and development log
 ```

@@ -64,6 +64,12 @@ const paths: Record<string, ReactNode> = {
   undo: <path d="M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3" />,
   refresh: <path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6" />,
   upload: <path d="M12 20V9m0 0l-4.5 4.5M12 9l4.5 4.5M5 4h14" />,
+  clipboard: (
+    <>
+      <rect x="8" y="3" width="8" height="4" rx="1" />
+      <path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
+    </>
+  ),
   plus: <path d="M12 5v14M5 12h14" />,
   trash: <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />,
   target: (

@@ -225,3 +225,19 @@ def test_reward_gates_and_ordering():
     high = reward(RewardInput(**{**base, "must_have": 0.9})).total
     stuffed = reward(RewardInput(**{**base, "must_have": 0.9, "stuffing": 3})).total
     assert high > low and stuffed < high
+
+
+def test_lint_pasted_from_overleaf():
+    # Only part of the file was copied
+    part = JAKE[JAKE.index("\\section{Experience}") : JAKE.index("\\section{Projects}")]
+    assert "partial" in {i.id for i in lint_source(parse_resume(part), "pdflatex")}
+    # The project splits the resume into files, and has a photo
+    multi = JAKE.replace("\\section{Projects}", "\\input{sections/projects}\n\\section{Projects}").replace(
+        "\\begin{center}", "\\includegraphics[width=2cm]{photo.jpg}\n\\begin{center}"
+    )
+    issues = {i.id: i for i in lint_source(parse_resume(multi), "pdflatex")}
+    assert "multi_file" in issues and "sections/projects" in issues["multi_file"].message
+    assert issues["images"].fixable
+    assert "includegraphics" not in apply_lint_fix(multi, "images")
+    # glyphtounicode is a TeX Live file, not a project file
+    assert not {"partial", "multi_file", "images"} & {i.id for i in lint_source(parse_resume(JAKE), "pdflatex")}

@@ -112,6 +112,7 @@ export function ModelCard({ config, apiKey, setApiKey, provider, setProvider, mo
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
           Remember on this device
         </label>
+        <span className="hint">{remember ? 'Saved in this browser only, never on our server.' : 'Kept until you close this tab.'}</span>
         {apiKey.trim() && (
           <button type="button" className="link" onClick={() => setOverride((o) => !o)}>
             {override ? 'Detect provider from key' : 'Wrong provider?'}

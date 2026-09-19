@@ -94,6 +94,19 @@ def tex_available() -> bool:
     return tex_bin_dir() is not None
 
 
+def missing_tex_files(names: list[str]) -> list[str]:
+    """Which of these .cls / .sty files TeX can't find (empty if TeX isn't installed)."""
+    bindir = tex_bin_dir()
+    if not names or bindir is None or not (bindir / "kpsewhich").exists():
+        return []
+    try:
+        out = subprocess.run([str(bindir / "kpsewhich"), *names], capture_output=True, text=True, timeout=10).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    found = {Path(line.strip()).name for line in out.splitlines() if line.strip()}
+    return [n for n in names if n not in found]
+
+
 def _tool(name: str) -> str | None:
     """A poppler tool (pdftotext, pdfinfo) if installed."""
     return shutil.which(name)
