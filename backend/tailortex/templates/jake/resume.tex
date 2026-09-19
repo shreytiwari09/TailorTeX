@@ -1,0 +1,151 @@
+%-------------------------
+% TailorTeX default template
+% Based on "Jake's Resume" by Jake Gutierrez (MIT License), with ATS fixes:
+%   - glyphtounicode + T1/lmodern so "fi"/"fl" extract as plain letters
+%   - bold section headings instead of small caps
+%   - plain text contact line, no icon fonts
+%   - a single column
+%-------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\input{glyphtounicode}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Section headings: bold, with a rule underneath
+\titleformat{\section}{
+  \vspace{-4pt}\bfseries\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Make PDF text searchable by an ATS
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+\begin{document}
+
+\begin{center}
+    {\Huge \textbf{Aarav Mehta}} \\ \vspace{3pt}
+    \small Phone: +91 98765 43210 $|$ Email: \href{mailto:aarav.mehta@example.com}{aarav.mehta@example.com} $|$
+    \href{https://linkedin.com/in/aarav-mehta-example}{linkedin.com/in/aarav-mehta-example} $|$
+    \href{https://github.com/aarav-mehta-example}{github.com/aarav-mehta-example}
+\end{center}
+
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Vellore Institute of Technology}{Vellore, India}
+      {Bachelor of Technology in Computer Science and Engineering; CGPA 8.7/10}{Aug. 2021 -- May 2025}
+  \resumeSubHeadingListEnd
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
+
+    \resumeSubheading
+      {Software Engineer}{Jul. 2025 -- Present}
+      {Finch Payments}{Bengaluru, India}
+      \resumeItemListStart
+        \resumeItem{Developed REST endpoints in Python and Flask for merchant onboarding, used by 1,200 merchants in the first quarter}
+        \resumeItem{Cut the p95 latency of the settlement report from 4.2s to 900ms by adding Redis caching and rewriting two PostgreSQL queries}
+        \resumeItem{Wrote integration tests with pytest that raised coverage of the payouts service from 41\% to 78\%}
+        \resumeItem{Moved three cron jobs to Celery workers and added retries, ending the missed nightly reconciliations}
+      \resumeItemListEnd
+
+    \resumeSubheading
+      {Software Engineering Intern}{May 2024 -- Jul. 2024}
+      {Kestrel Analytics}{Pune, India}
+      \resumeItemListStart
+        \resumeItem{Built an internal dashboard in React and TypeScript that replaced a weekly spreadsheet report for 30 analysts}
+        \resumeItem{Containerized a data ingestion service with Docker and set up a GitHub Actions pipeline for tests and image builds}
+        \resumeItem{Worked with the data team to define the schema for event logs, reducing malformed records by 60\%}
+      \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{Projects}
+    \resumeSubHeadingListStart
+      \resumeProjectHeading
+          {\textbf{Ledgerly} $|$ \emph{Go, PostgreSQL, Docker}}{2024}
+          \resumeItemListStart
+            \resumeItem{Wrote a double-entry bookkeeping API in Go with idempotent writes, tested against 10,000 generated transactions}
+            \resumeItem{Added a PostgreSQL row-level locking scheme that removed race conditions in concurrent transfers}
+          \resumeItemListEnd
+      \resumeProjectHeading
+          {\textbf{StudyBuddy} $|$ \emph{Python, FastAPI, React}}{2023}
+          \resumeItemListStart
+            \resumeItem{Built a flashcard app with spaced repetition; 400 students at my university used it during exams}
+            \resumeItem{Designed the FastAPI backend and a React frontend, deployed on a single cloud VM}
+          \resumeItemListEnd
+    \resumeSubHeadingListEnd
+
+%-----------SKILLS-----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: Python, Go, TypeScript, JavaScript, SQL, Java} \\
+     \textbf{Frameworks}{: Flask, FastAPI, React, Celery, pytest} \\
+     \textbf{Tools}{: PostgreSQL, Redis, Docker, Git, GitHub Actions, Linux}
+    }}
+ \end{itemize}
+
+\end{document}
