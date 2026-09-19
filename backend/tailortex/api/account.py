@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..compile.compile import UnsafeLatexError
 from ..db import engine, repo
-from ..db.firebase import FirebaseAuthError, verify, web_config
+from ..db.google import GoogleAuthError, client_id, verify
 from ..db.models import Profile
 from ..db.rank import make_ranker
 from ..evidence.github import GitHubError, best_repos
@@ -87,27 +87,58 @@ def _extractor(profile: Profile) -> core._Extractor:
 # --- accounts ----------------------------------------------------------------------------------
 
 
-class FirebaseIn(BaseModel):
-    id_token: str = Field(max_length=6000)
+class GoogleIn(BaseModel):
+    credential: str = Field(max_length=5000)
+
+
+class SignUpIn(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=200)
+    full_name: str = Field(default="", max_length=200)
+
+
+class SignInIn(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=200)
 
 
 @router.get("/auth/config")
 async def auth_config():
-    """What the browser needs to start signing in: whether accounts are on, and the public Firebase web config."""
-    return {"accounts": engine.enabled(), "firebase": web_config()}
+    return {"accounts": engine.enabled(), "google_client_id": client_id()}
 
 
-@router.post("/auth/firebase")
-async def auth_firebase(body: FirebaseIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
-    """Exchange a Firebase ID token (from Google or email-link sign-in) for our own session cookie."""
+@router.post("/auth/google")
+async def auth_google(body: GoogleIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
     core.rate_limit(request, "auth")
     try:
-        claims = await verify(body.id_token)
-    except FirebaseAuthError as e:
+        claims = await verify(body.credential)
+    except GoogleAuthError as e:
         raise HTTPException(401, str(e)) from None
-    profile, token, created = await repo.sign_in_firebase(db, claims)
+    profile, token, created = await repo.sign_in_google(db, claims)
     _set_cookie(request, response, token)
     return {"created": created, "profile": await repo.profile_payload(db, profile)}
+
+
+@router.post("/auth/signup")
+async def auth_signup(body: SignUpIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    core.rate_limit(request, "auth")
+    try:
+        profile, token = await repo.sign_up(db, body.email, body.password, body.full_name)
+    except repo.AuthError as e:
+        raise HTTPException(400, str(e)) from None
+    _set_cookie(request, response, token)
+    return {"created": True, "profile": await repo.profile_payload(db, profile)}
+
+
+@router.post("/auth/signin")
+async def auth_signin(body: SignInIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    core.rate_limit(request, "auth")
+    try:
+        profile, token = await repo.sign_in(db, body.email, body.password)
+    except repo.AuthError as e:
+        raise HTTPException(401, str(e)) from None
+    _set_cookie(request, response, token)
+    return {"created": False, "profile": await repo.profile_payload(db, profile)}
 
 
 @router.post("/auth/signout")

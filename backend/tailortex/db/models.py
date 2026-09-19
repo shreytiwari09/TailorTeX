@@ -27,9 +27,9 @@ class Profile(Base):
     __tablename__ = "profiles"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     # account
-    firebase_uid: Mapped[str | None] = mapped_column(String(128), unique=True)
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
-    sign_in_provider: Mapped[str | None] = mapped_column(String(40))  # google.com, password (email link), ...
+    password_hash: Mapped[str | None] = mapped_column(String(300))
+    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
     avatar_url: Mapped[str | None] = mapped_column(Text)
     # personal details
     full_name: Mapped[str] = mapped_column(Text, default="")

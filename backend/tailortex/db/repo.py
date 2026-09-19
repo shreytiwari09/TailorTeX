@@ -16,13 +16,18 @@ from ..evidence.notes import notes_to_evidence
 from ..latex.parse import parse_resume
 from ..types import EvidenceItem
 from . import crypto
-from .auth import new_token, token_hash
+from .auth import check_password, hash_password, new_token, token_hash
 from .embed import embed
 from .models import EvidenceRow, Profile, Run, Session
 
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 NOTE_ID = re.compile(r"^n\d+$")
 DETAIL_FIELDS = ("full_name", "headline", "location", "phone", "public_email")
 LINK_KEYS = ("linkedin", "github", "portfolio", "other")
+
+
+class AuthError(Exception):
+    pass
 
 
 # --- sessions and accounts ------------------------------------------------------------
@@ -44,10 +49,31 @@ async def _new_session(db: AsyncSession, profile: Profile) -> str:
     return token
 
 
-async def sign_in_firebase(db: AsyncSession, claims: dict) -> tuple[Profile, str, bool]:
-    """(profile, session token, created). Finds the person by Firebase UID, else by verified email, else creates them."""
-    uid, email = str(claims["sub"]), str(claims["email"]).lower()
-    profile = await db.scalar(select(Profile).where(Profile.firebase_uid == uid))
+async def sign_up(db: AsyncSession, email: str, password: str, full_name: str = "") -> tuple[Profile, str]:
+    email = email.strip().lower()
+    if not EMAIL_RE.match(email):
+        raise AuthError("That doesn't look like an email address.")
+    if len(password) < 8:
+        raise AuthError("Use a password of at least 8 characters.")
+    if await db.scalar(select(func.count()).select_from(Profile).where(Profile.email == email)):
+        raise AuthError("An account with that email already exists. Sign in instead.")
+    profile = Profile(email=email, password_hash=hash_password(password), full_name=full_name.strip()[:200], public_email=email)
+    db.add(profile)
+    await db.flush()
+    return profile, await _new_session(db, profile)
+
+
+async def sign_in(db: AsyncSession, email: str, password: str) -> tuple[Profile, str]:
+    profile = await db.scalar(select(Profile).where(Profile.email == email.strip().lower()))
+    if profile is None or not check_password(password, profile.password_hash):
+        raise AuthError("Wrong email or password." if profile is None or profile.password_hash else "This account uses Google sign-in.")
+    return profile, await _new_session(db, profile)
+
+
+async def sign_in_google(db: AsyncSession, claims: dict) -> tuple[Profile, str, bool]:
+    """(profile, session token, created). Links to an existing email account on first Google sign-in."""
+    sub, email = str(claims["sub"]), str(claims["email"]).lower()
+    profile = await db.scalar(select(Profile).where(Profile.google_sub == sub))
     created = False
     if profile is None:
         profile = await db.scalar(select(Profile).where(Profile.email == email))
@@ -55,8 +81,7 @@ async def sign_in_firebase(db: AsyncSession, claims: dict) -> tuple[Profile, str
             profile = Profile(email=email, public_email=email)
             db.add(profile)
             created = True
-        profile.firebase_uid = uid
-    profile.sign_in_provider = str((claims.get("firebase") or {}).get("sign_in_provider") or "")[:40] or profile.sign_in_provider
+        profile.google_sub = sub
     if not profile.full_name and claims.get("name"):
         profile.full_name = str(claims["name"])[:200]
     if claims.get("picture"):
@@ -128,7 +153,7 @@ async def profile_payload(db: AsyncSession, profile: Profile) -> dict:
     )).all())
     return {
         "id": str(profile.id),
-        "account": {"email": profile.email, "provider": profile.sign_in_provider, "avatar_url": profile.avatar_url},
+        "account": {"email": profile.email, "google": bool(profile.google_sub), "password": bool(profile.password_hash), "avatar_url": profile.avatar_url},
         "details": {**{f: getattr(profile, f) for f in DETAIL_FIELDS}, "links": profile.links or {}},
         "resume_tex": profile.resume_tex,
         "notes": profile.notes,
