@@ -279,3 +279,47 @@ def test_links_endpoint(monkeypatch):
     assert ok["evidence"] and ok["evidence"][0]["source"] == "portfolio"
     assert next(x for x in portfolios if "broken" in x["link"])["error"] == "Couldn't load that page."
     assert r["notes"]  # read without a model
+
+
+# --- notes and forgetting -----------------------------------------------------------------
+
+
+def test_notes_become_one_fact_per_line():
+    from tailortex.evidence.notes import notes_to_evidence
+
+    items = notes_to_evidence("- Led the robotics club, 12 members\n\n2. At Finch Payments I built Kafka consumers in Python.\n   \n• Speak Spanish")
+    assert [(i.id, i.text) for i in items] == [
+        ("n1", "Led the robotics club, 12 members"),
+        ("n2", "At Finch Payments I built Kafka consumers in Python."),
+        ("n3", "Speak Spanish"),
+    ]
+    assert items[1].source == "fact" and {"Kafka", "Python"} <= set(items[1].skills)
+
+
+def test_notes_back_a_new_bullet_but_nothing_more():
+    from pathlib import Path
+
+    from tailortex.evidence.notes import notes_to_evidence
+    from tailortex.validate.validate import ValidationContext, validate_ops
+
+    tex = (Path(__file__).parents[1] / "tailortex" / "templates" / "jake" / "resume.tex").read_text()
+    ctx = ValidationContext(doc=parse_resume(tex), evidence=notes_to_evidence("At Finch Payments I built Kafka consumers in Python."))
+    ok = Op(op="add", target="s1.e0", text="Built Kafka consumers in Python", evidence=["n1"])
+    bad = Op(op="add", target="s1.e0", text="Built Kafka consumers in Python handling 2M events a day", evidence=["n1"])
+    r = validate_ops([ok, bad], ctx)
+    assert len(r.valid) == 1 and r.violations[0].rule == "invented_number"
+
+
+def test_forget_deletes_this_devices_learning_data(monkeypatch, tmp_path):
+    monkeypatch.setenv("TAILORTEX_API_KEY", "")
+    from tailortex.learn.bandit import Bandit
+    from tailortex.learn.style import StyleMemory
+
+    Bandit().update("backend|mid", "balanced", 1.0, user="device-9")
+    StyleMemory().record("device-9", ["kept bullet"], [])
+    client = TestClient(main.app)
+    assert client.post("/api/forget", json={"user": "device-9"}).json() == {"deleted": True}
+    assert StyleMemory().get("device-9") == ([], [])
+    assert "device-9" not in Bandit().store.load().get("users", {})
+    assert Bandit().stats()["backend|mid"]["balanced"]["n"] == 1.0  # the anonymous global count stays
+    assert client.post("/api/forget", json={"user": "device-9"}).json() == {"deleted": False}

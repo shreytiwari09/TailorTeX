@@ -52,3 +52,11 @@ class StyleMemory:
         u = data.setdefault(user, {"rules": [], "liked": [], "pairs": [], "events": 0})
         u["rules"] = [r.strip() for r in rules if r.strip()][:MAX_RULES]
         self.store.save(data)
+
+    def forget(self, user: str) -> bool:
+        data = self.store.load()
+        if user not in data:
+            return False
+        del data[user]
+        self.store.save(data)
+        return True

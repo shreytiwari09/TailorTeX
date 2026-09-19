@@ -122,6 +122,16 @@ class Bandit:
             runs[user] = runs.get(user, 0) + 1
         self.store.save(data)
 
+    def forget(self, user: str) -> bool:
+        """Remove a user's own statistics. Their past runs stay in the anonymous global table."""
+        data = self.store.load()
+        found = user in data.get("users", {}) or user in data.get("user_runs", {})
+        data.get("users", {}).pop(user, None)
+        data.get("user_runs", {}).pop(user, None)
+        if found:
+            self.store.save(data)
+        return found
+
     def stats(self, ctx: str | None = None) -> dict:
         data = self.store.load().get("global", {})
         out = {}

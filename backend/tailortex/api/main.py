@@ -36,6 +36,7 @@ from ..types import EvidenceItem, JobAnalysis
 from ..evidence.extract import EXTRACT_SYSTEM, POSTS_SYSTEM, archive_items, extract_plain, extract_with_model, posts_plain
 from ..evidence.github import GitHubError, best_repos, import_repos, list_repos
 from ..evidence.links import classify, split_links
+from ..evidence.notes import notes_to_evidence
 from ..evidence.sources import SourceError, fetch_page, html_to_text, pdf_to_text, read_linkedin_archive
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -110,6 +111,7 @@ class TailorRequest(KeyRequest):
     jd: str = Field(max_length=MAX_JD)
     evidence: list[EvidenceItem] = Field(default_factory=list, max_length=60)
     skills: list[str] = Field(default_factory=list, max_length=80)
+    notes: str = Field(default="", max_length=6000)
     candidates: int = Field(default=1, ge=1, le=3)
     compile: bool = True
     page_limit: int | None = Field(default=None, ge=1, le=4)
@@ -122,8 +124,13 @@ class RebuildRequest(BaseModel):
     analysis: JobAnalysis
     evidence: list[EvidenceItem] = Field(default_factory=list, max_length=60)
     skills: list[str] = Field(default_factory=list, max_length=80)
+    notes: str = Field(default="", max_length=6000)
     compile: bool = True
     page_limit: int | None = Field(default=None, ge=1, le=4)
+
+
+class ForgetRequest(BaseModel):
+    user: str = Field(min_length=1, max_length=64)
 
 
 class GitHubRequest(BaseModel):
@@ -183,8 +190,9 @@ def make_llm(req: KeyRequest) -> LLMClient:
     return LLMClient(provider=provider, key=key, model=model or "")
 
 
-def evidence_with_skills(evidence: list[EvidenceItem], skills: list[str]) -> list[EvidenceItem]:
-    items = [e for e in evidence if e.full_text().strip()]
+def evidence_with_skills(evidence: list[EvidenceItem], skills: list[str], notes: str = "") -> list[EvidenceItem]:
+    """Everything the user told us about themselves, as evidence: imported items, notes, confirmed skills."""
+    items = [e for e in evidence if e.full_text().strip()] + notes_to_evidence(notes)
     clean = [s.strip() for s in skills if s.strip()][:80]
     if clean:
         items.append(EvidenceItem(id="skills", source="skill", title="Skills the candidate can defend in an interview", skills=clean))
@@ -286,6 +294,7 @@ async def sample():
         "jd": (PKG / "samples" / "jd_backend.txt").read_text(),
         "evidence": data["evidence"],
         "skills": data["skills"],
+        "notes": data.get("notes", ""),
     }
 
 
@@ -330,7 +339,7 @@ async def tailor_endpoint(req: TailorRequest, request: Request):
     if not req.jd.strip():
         raise HTTPException(400, "Paste the job description.")
     inp = TailorInput(
-        tex=req.tex, jd=req.jd, evidence=evidence_with_skills(req.evidence, req.skills),
+        tex=req.tex, jd=req.jd, evidence=evidence_with_skills(req.evidence, req.skills, req.notes),
         candidates=req.candidates, compile_pdf=req.compile, page_limit=req.page_limit, user=req.user,
     )
     queue: asyncio.Queue = asyncio.Queue()
@@ -376,7 +385,7 @@ async def tailor_endpoint(req: TailorRequest, request: Request):
 async def rebuild_endpoint(req: RebuildRequest, request: Request):
     rate_limit(request, "compile")
     try:
-        return await rebuild(req.tex, req.ops, req.analysis, evidence_with_skills(req.evidence, req.skills), req.compile, req.page_limit)
+        return await rebuild(req.tex, req.ops, req.analysis, evidence_with_skills(req.evidence, req.skills, req.notes), req.compile, req.page_limit)
     except UnsafeLatexError as e:
         raise HTTPException(400, str(e)) from None
 
@@ -548,6 +557,14 @@ async def feedback(req: FeedbackRequest, request: Request):
             except (LLMError, HTTPException):
                 distilled = None
     return {"reward": round(total, 4), "style_rules": distilled}
+
+
+@app.post("/api/forget")
+async def forget(req: ForgetRequest):
+    """Delete what the server learned from this device: its style memory and its own strategy statistics."""
+    removed_style = StyleMemory().forget(req.user)
+    removed_bandit = Bandit().forget(req.user)
+    return {"deleted": removed_style or removed_bandit}
 
 
 @app.get("/api/learning")

@@ -181,7 +181,7 @@ export const api = {
   config: () => request<Config>('/api/config'),
   models: (key: string, provider: string | null) =>
     request<{ provider: string; models: ModelInfo[]; recommended: string | null }>('/api/models', { key: key || null, provider }),
-  sample: () => request<{ tex: string; jd: string; evidence: Evidence[]; skills: string[] }>('/api/sample'),
+  sample: () => request<{ tex: string; jd: string; evidence: Evidence[]; skills: string[]; notes: string }>('/api/sample'),
   template: () => request<{ tex: string }>('/api/template'),
   parse: (tex: string) => request<Outline>('/api/parse', { tex }),
   lintFix: (tex: string, fix: string) => request<{ tex: string; outline: Outline }>('/api/lint/fix', { tex, fix }),
@@ -196,6 +196,7 @@ export const api = {
   links: (body: { links: string[]; key: string | null; provider: string | null; model: string | null }) =>
     request<{ results: LinkResult[]; notes: string[] }>('/api/evidence/links', body),
   rebuild: (body: unknown) => request<RebuildResult>('/api/rebuild', body),
+  forget: (user: string) => request<{ deleted: boolean }>('/api/forget', { user }),
   feedback: (body: unknown) => request<{ reward: number; style_rules: string[] | null }>('/api/feedback', body),
 }
 

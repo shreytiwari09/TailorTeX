@@ -5,16 +5,20 @@
       "source": "github",
       "title": "ledgerly",
       "text": "Double-entry bookkeeping API in Go. Deployed the Ledgerly API on Kubernetes with Helm, with a GitHub Actions pipeline that runs tests and builds images.",
-      "skills": ["Go", "PostgreSQL", "Docker", "Kubernetes", "Helm", "GitHub Actions"],
+      "skills": [
+        "Go",
+        "PostgreSQL",
+        "Docker",
+        "Kubernetes",
+        "Helm",
+        "GitHub Actions"
+      ],
       "url": "https://github.com/aarav-mehta-example/ledgerly"
-    },
-    {
-      "id": "ev2",
-      "source": "fact",
-      "title": "Finch Payments",
-      "text": "At Finch Payments I built Kafka consumers in Python that process settlement events for the payouts service.",
-      "skills": ["Kafka", "Python"]
     }
   ],
-  "skills": ["AWS", "Microservices"]
+  "skills": [
+    "AWS",
+    "Microservices"
+  ],
+  "notes": "At Finch Payments I built Kafka consumers in Python that process settlement events for the payouts service.\nOrganized a 200-person campus hackathon at VIT in 2023."
 }

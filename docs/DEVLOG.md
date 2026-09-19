@@ -106,6 +106,14 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 
 **Posts:** "Save to PDF" leaves out posts, and posts are often where people announce projects, launches and wins. LinkedIn's data export includes them (Shares.csv). Only the profile, positions, projects, skills, certifications, honors, publications and posts files are opened; messages and connections are never read. The user's model keeps only posts about the person's own work, and every extracted item is checked against the post text. Pasted posts add up across pastes.
 
+## 11. Four inputs, a notes box, and "Delete my data"
+
+**What:** "About you" is now exactly four things: a GitHub link, a portfolio link, a LinkedIn PDF, and "Anything else about you", a free-text box where each line becomes one fact (IDs `n1`, `n2`, ...). The extra tabs (skills, facts, pasted text, repo picking, the LinkedIn data export) left the interface; the endpoints stay for later. The footer has a "Delete my data" button that clears everything in the browser and deletes this browser's style memory and strategy statistics on the server (`POST /api/forget`).
+
+**Why:** fewer choices make the step faster, and people have more to say about themselves than any profile holds. One fact per line keeps a number next to the sentence that explains it, so the validator can let a bullet use exactly what the user wrote, and nothing more (a test checks that a note saying "built Kafka consumers" can't be turned into "handling 2M events a day").
+
+**Where data lives** is written up in the README: inputs in the browser, request data in server memory only for that request, and only anonymous style memory and strategy statistics kept on the server.
+
 ## Test status
 
-91 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.
+94 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.

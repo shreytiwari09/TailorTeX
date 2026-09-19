@@ -21,7 +21,7 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **Always compiles.** The model never writes LaTeX. It returns edit operations in plain text, and TailorTeX writes the LaTeX itself with an escaper that can't produce broken markup.
 - **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from evidence you provided. Rejected edits go back to the model with the reason.
 - **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it, not on a made-up score.
-- **Knows your background.** Paste your links: your GitHub (top repositories are picked automatically) and portfolio are read straight away; LinkedIn takes one file, the PDF from its Save to PDF button, or its data export to include your posts. Your model breaks it all into roles, projects and skills, each checked against the source, and TailorTeX suggests what's worth adding for each job. Job keywords with no proof are asked about, never slipped in.
+- **Knows your background.** Add your GitHub link (top repositories are picked automatically), your portfolio link, your LinkedIn PDF (Save to PDF on your profile), and anything else about you in plain sentences. Your model breaks it into roles, projects and skills, each checked against the source, and TailorTeX suggests what's worth adding for each job. Job keywords with no proof are asked about, never slipped in.
 - **Review everything.** Word-level diff for every change with the reason and evidence behind it. Keep, revert or edit each one, then rebuild the PDF.
 - **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live.
 - **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each user's writing style.
@@ -49,7 +49,7 @@ Other commands:
 
 | Command | What it does |
 |---|---|
-| `make test` | 91 backend tests (including real LaTeX compiles), frontend type-check and lint |
+| `make test` | 94 backend tests (including real LaTeX compiles), frontend type-check and lint |
 | `make start` | Build the frontend and serve the whole app from the backend on :8000 |
 | API docs | http://localhost:8000/docs (interactive, from FastAPI) |
 
@@ -110,7 +110,7 @@ backend/
     reward/     the reward function (layer 0 of the learning loop)
     evidence/   background sources: GitHub, LinkedIn PDF, portfolio pages, verified extraction
     api/        FastAPI app (REST + server-sent events)
-  tests/        pytest: 91 tests, including real LaTeX compiles and a mock-model pipeline run
+  tests/        pytest: 94 tests, including real LaTeX compiles and a mock-model pipeline run
 frontend/       React + Vite + TypeScript single-page app
 docs/           product plan and development log
 ```
@@ -126,9 +126,23 @@ docs/           product plan and development log
 | `POST /api/tailor` | The full run, streamed as server-sent events; the last event is the result |
 | `POST /api/rebuild` | Re-apply the changes you kept or edited, recompile and re-measure |
 | `POST /api/evidence/github` | List a user's public repos, or import chosen ones as evidence |
-| `POST /api/evidence/links` | Any mix of links: GitHub profiles and repos, portfolio sites (LinkedIn links get a one-step instruction) |
+| `POST /api/evidence/links` | GitHub profile or repo links and portfolio sites, read into evidence |
 | `POST /api/evidence/profile` | LinkedIn PDF, data export (with posts) or text, or portfolio text, broken into verified evidence items |
 | `POST /api/feedback` | Keep / revert / edit decisions: rewards the bandit and updates style memory |
+| `POST /api/forget` | Delete what the server learned from this browser (style memory, its strategy statistics) |
+
+## Where your data is stored
+
+| What | Where | For how long |
+|---|---|---|
+| Your resume, job description, links, notes, imported GitHub/portfolio/LinkedIn items | Your browser (`localStorage`) | Until you click **Delete my data** or clear site data |
+| Your model key | Your browser: this tab (`sessionStorage`), and `localStorage` if "Remember on this device" is on | Same as above; never on the server |
+| Anything you send for a run (resume, job, background) | Server memory, for that one request | Discarded when the request ends; LaTeX compiles in a temp folder that is deleted right after |
+| LinkedIn PDF or export | Server memory, while it's read | Discarded; only the extracted items go back to your browser |
+| Style memory: up to 8 bullets you kept or edited and a few style rules, under an anonymous ID for your browser | The server's `data/style.json` (the `tailortex-data` volume in Docker) | Until you click **Delete my data** |
+| Strategy statistics (which tailoring strategy worked for which kind of job) | The server's `data/bandit.json` | Kept; your own table is removed by **Delete my data**, the anonymous totals stay |
+
+Your resume, job description and background are sent to the model provider you choose, and your GitHub username to GitHub's public API. Nothing else leaves the server, and request bodies are never logged.
 
 ## Security and privacy
 

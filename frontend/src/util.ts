@@ -122,3 +122,11 @@ export function openInOverleaf(tex: string, name: string, engine: string) {
 }
 
 export const pct = (x: number | null | undefined) => (x === null || x === undefined ? '–' : `${Math.round(x * 100)}%`)
+
+/** The notes box, one fact per non-empty line: the same split the server makes (IDs n1, n2, ...). */
+export function noteLines(notes: string): string[] {
+  return notes
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:[-*•·]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+}

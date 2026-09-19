@@ -8,7 +8,7 @@ import { ModelCard } from './components/ModelCard'
 import { Progress } from './components/Progress'
 import { ResumeCard } from './components/ResumeCard'
 import { Results, type View } from './components/Results'
-import { base64ToBlob, deviceId, downloadBlob, openInOverleaf, plain, session, store } from './util'
+import { base64ToBlob, deviceId, downloadBlob, noteLines, openInOverleaf, plain, session, store } from './util'
 
 const REPO_URL = 'https://github.com/shreytiwari09/TailorTex'
 
@@ -38,6 +38,7 @@ export default function App() {
 
   const [evidence, setEvidence] = useState<Evidence[]>(() => store.get('evidence', []))
   const [skills, setSkills] = useState<string[]>(() => store.get('skills', []))
+  const [notes, setNotes] = useState(() => store.get('notes', ''))
   const [jd, setJd] = useState(() => store.get('jd', ''))
   const [candidates, setCandidates] = useState(() => store.get('candidates', 1))
   const [compilePdf, setCompilePdf] = useState(true)
@@ -69,6 +70,7 @@ export default function App() {
         setJd(s.jd)
         setEvidence(s.evidence)
         setSkills(s.skills)
+        setNotes(s.notes)
       }).catch((e: Error) => setError(e.message))
     }
   }, [])
@@ -78,6 +80,7 @@ export default function App() {
   useEffect(() => store.set('jd', jd), [jd])
   useEffect(() => store.set('evidence', evidence), [evidence])
   useEffect(() => store.set('skills', skills), [skills])
+  useEffect(() => store.set('notes', notes), [notes])
   useEffect(() => store.set('model', model), [model])
   useEffect(() => store.set('candidates', candidates), [candidates])
   useEffect(() => {
@@ -123,6 +126,7 @@ export default function App() {
       setJd(s.jd)
       setEvidence(s.evidence)
       setSkills(s.skills)
+      setNotes(s.notes)
       setToast('Sample loaded: a resume, a job description and some evidence. Add a model key and press Tailor.')
     } catch (e) {
       setError((e as Error).message)
@@ -177,6 +181,7 @@ export default function App() {
           model: model || null,
           evidence,
           skills,
+          notes,
           candidates,
           compile: compilePdf,
           page_limit: pageLimit,
@@ -242,7 +247,7 @@ export default function App() {
         if (d?.action === 'edited') return [{ ...op, text: d.text ?? op.text, source: 'user' as const }]
         return [op]
       })
-      const r = await api.rebuild({ tex, ops, analysis: result.analysis, evidence, skills, compile: compilePdf, page_limit: result.page_limit })
+      const r = await api.rebuild({ tex, ops, analysis: result.analysis, evidence, skills, notes, compile: compilePdf, page_limit: result.page_limit })
       setView({ tex: r.tex, pdf: r.pdf, after: r.after, warnings: r.warnings })
       setBuilt(signature(decisions))
       sendFeedback()
@@ -256,12 +261,32 @@ export default function App() {
   const evidenceLabels = useMemo(() => {
     const m: Record<string, string> = { skills: 'skills you confirmed' }
     for (const e of evidence) m[e.id] = e.title || e.id
+    noteLines(notes).forEach((line, i) => {
+      m[`n${i + 1}`] = line.length > 48 ? `${line.slice(0, 46)}…` : line
+    })
     return m
-  }, [evidence])
+  }, [evidence, notes])
 
   const confirmSkill = (term: string) => {
     if (!skills.some((s) => s.toLowerCase() === term.toLowerCase())) setSkills([...skills, term])
     setToast(`Added "${term}" to the skills you can defend. Run again to use it.`)
+  }
+
+  const forgetEverything = async () => {
+    if (!window.confirm('Delete everything TailorTeX keeps about you: your resume, job description, links, notes and key in this browser, and the writing style it learned on the server?')) return
+    try {
+      await api.forget(deviceId())
+    } catch {
+      /* the local data is cleared either way */
+    }
+    try {
+      for (const area of [localStorage, sessionStorage]) {
+        Object.keys(area).filter((k) => k.startsWith('tailortex:')).forEach((k) => area.removeItem(k))
+      }
+    } catch {
+      /* storage unavailable */
+    }
+    window.location.href = '/'
   }
 
   const dirty = !!result && signature(decisions) !== built
@@ -329,6 +354,8 @@ export default function App() {
               setEvidence={setEvidence}
               skills={skills}
               setSkills={setSkills}
+              notes={notes}
+              setNotes={setNotes}
               llm={{ key: apiKey.trim() || null, provider: apiKey.trim() ? provider : null, model: model || null }}
             />
             <JobCard
@@ -403,8 +430,13 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <span>TailorTeX · built for HackDevengers 2.0 · your keys and resume go only to the model provider you choose</span>
-        <a href={REPO_URL} target="_blank" rel="noreferrer">Source on GitHub</a>
+        <span>
+          TailorTeX · built for HackDevengers 2.0 · your resume and details stay in this browser and go only to the model provider you choose
+        </span>
+        <span className="row gap-s">
+          <button type="button" className="link" onClick={forgetEverything}>Delete my data</button>
+          <a href={REPO_URL} target="_blank" rel="noreferrer">Source on GitHub</a>
+        </span>
       </footer>
 
       {toast && <div className="toast" role="status">{toast}</div>}
