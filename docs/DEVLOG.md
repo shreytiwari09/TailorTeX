@@ -96,6 +96,16 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 - **Extraction can't invent either.** The user's model splits the text into roles, projects, achievements and skills, and then every item is checked against the source: sentences with numbers or names the source doesn't contain are dropped, and so are skills it doesn't mention. Without a key, the text is split into paragraphs with known skills picked out, and the app says so.
 - **Evidence scope carries over:** LinkedIn items describe your roles and can back bullets anywhere; portfolio and GitHub items back projects, the summary and skills lines.
 
+## 10. Just paste your links; LinkedIn posts
+
+**What:** "About you" now starts with one box: paste your links and press Add. GitHub profile links import your top repositories automatically (your own repos, most stars first, then most recent), repo links import that repo, and any other link is read as a portfolio page. LinkedIn is one file dropped in one place: the PDF from its Save to PDF button, or its data export ZIP, which also carries your posts. Skills, facts, pasted text and hand-picking repos moved under "More ways to add context".
+
+**Why:** Uploading and ticking things in five tabs was too much work for context that should take seconds.
+
+**Why LinkedIn still needs a file:** a LinkedIn link can't be read by an app. LinkedIn shows profiles only to signed-in people and blocks automated requests, its terms forbid scraping, and "Sign in with LinkedIn" only shares your name, email and photo. So when someone pastes a LinkedIn link, the app says so and points at the one-file route, with a button that opens their profile.
+
+**Posts:** "Save to PDF" leaves out posts, and posts are often where people announce projects, launches and wins. LinkedIn's data export includes them (Shares.csv). Only the profile, positions, projects, skills, certifications, honors, publications and posts files are opened; messages and connections are never read. The user's model keeps only posts about the person's own work, and every extracted item is checked against the post text. Pasted posts add up across pastes.
+
 ## Test status
 
-86 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.
+91 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.

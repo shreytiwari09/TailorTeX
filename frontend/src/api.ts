@@ -119,7 +119,16 @@ export type Suggestion = {
   must: string[]
   cited: boolean
 }
-export type ProfileResult = { evidence: Evidence[]; used_model: boolean; chars: number; note: string | null }
+export type ProfileResult = { evidence: Evidence[]; skills: string[]; replaces: string[]; used_model: boolean; note: string | null }
+export type LinkResult = {
+  link: string
+  kind: 'github_user' | 'github_repo' | 'linkedin' | 'portfolio' | 'invalid'
+  evidence: Evidence[]
+  note: string | null
+  error: string | null
+  url: string | null
+}
+export type ProfileRequest = { kind: 'linkedin' | 'linkedin_posts' | 'portfolio'; pdf_base64?: string; zip_base64?: string; text?: string; url?: string }
 export type ProgressEvent = {
   type: 'progress'
   stage: string
@@ -182,8 +191,10 @@ export const api = {
       { username },
     ),
   githubImport: (username: string, repos: string[]) => request<{ evidence: Evidence[] }>('/api/evidence/github', { username, repos }),
-  profile: (body: { kind: 'linkedin' | 'portfolio'; pdf_base64?: string; text?: string; url?: string; key: string | null; provider: string | null; model: string | null }) =>
+  profile: (body: ProfileRequest & { key: string | null; provider: string | null; model: string | null }) =>
     request<ProfileResult>('/api/evidence/profile', body),
+  links: (body: { links: string[]; key: string | null; provider: string | null; model: string | null }) =>
+    request<{ results: LinkResult[]; notes: string[] }>('/api/evidence/links', body),
   rebuild: (body: unknown) => request<RebuildResult>('/api/rebuild', body),
   feedback: (body: unknown) => request<{ reward: number; style_rules: string[] | null }>('/api/feedback', body),
 }

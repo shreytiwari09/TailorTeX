@@ -10,17 +10,21 @@ server's own network.
 from __future__ import annotations
 
 import asyncio
+import csv
 import html
 import io
 import ipaddress
 import re
 import socket
+import zipfile
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
 MAX_PDF_BYTES = 5_000_000
+MAX_ZIP_BYTES = 20_000_000
+MAX_CSV_BYTES = 10_000_000
 MAX_PAGE_BYTES = 2_000_000
 MAX_TEXT_CHARS = 30_000
 
@@ -47,6 +51,35 @@ def pdf_to_text(data: bytes) -> str:
     text = "\n".join(pages)
     text = re.sub(r"(?m)^\s*Page \d+ of \d+\s*$", "", text)  # LinkedIn's page footers
     return clean_text(text)
+
+
+# The files read from LinkedIn's data archive. Messages, connections, invitations and
+# everything else in the archive are never opened.
+ARCHIVE_FILES = {"profile", "positions", "projects", "skills", "shares", "certifications", "honors", "publications"}
+
+
+def read_linkedin_archive(data: bytes) -> dict[str, list[dict[str, str]]]:
+    """Rows of the profile, positions, projects, skills, posts (shares), certifications, honors and publications CSVs."""
+    if len(data) > MAX_ZIP_BYTES:
+        raise SourceError("That ZIP is larger than 20 MB. In LinkedIn's export, pick only the data you need (posts, profile, positions, projects, skills).")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise SourceError("That file isn't a ZIP. Upload the archive LinkedIn emails you.") from None
+    out: dict[str, list[dict[str, str]]] = {}
+    for info in zf.infolist():
+        base = info.filename.rsplit("/", 1)[-1].lower()
+        name = base[:-4] if base.endswith(".csv") else ""
+        if name not in ARCHIVE_FILES or info.file_size > MAX_CSV_BYTES:
+            continue
+        raw = zf.read(info).decode("utf-8-sig", errors="replace")
+        if raw.lstrip().lower().startswith("notes:"):  # some exports put notes above the header
+            raw = raw.split("\n\n", 1)[-1]
+        rows = csv.DictReader(io.StringIO(raw))
+        out[name] = [{(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k} for row in rows]
+    if not out:
+        raise SourceError("That ZIP doesn't look like a LinkedIn data archive (no Profile, Positions or Shares file in it).")
+    return out
 
 
 def clean_text(text: str) -> str:

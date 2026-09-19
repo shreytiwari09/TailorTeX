@@ -33,9 +33,10 @@ from ..llm.providers import PROVIDERS, detect_provider, recommended_model
 from ..ops import Op
 from ..pipeline.tailor import TailorError, TailorInput, rebuild, tailor
 from ..types import EvidenceItem, JobAnalysis
-from ..evidence.extract import extract_plain, extract_with_model
-from ..evidence.github import GitHubError, import_repos, list_repos
-from ..evidence.sources import SourceError, fetch_page, html_to_text, pdf_to_text
+from ..evidence.extract import EXTRACT_SYSTEM, POSTS_SYSTEM, archive_items, extract_plain, extract_with_model, posts_plain
+from ..evidence.github import GitHubError, best_repos, import_repos, list_repos
+from ..evidence.links import classify, split_links
+from ..evidence.sources import SourceError, fetch_page, html_to_text, pdf_to_text, read_linkedin_archive
 
 ROOT = Path(__file__).resolve().parents[3]
 PKG = Path(__file__).resolve().parents[1]
@@ -131,10 +132,15 @@ class GitHubRequest(BaseModel):
 
 
 class ProfileRequest(KeyRequest):
-    kind: str = Field(pattern="^(linkedin|portfolio)$")
+    kind: str = Field(pattern="^(linkedin|linkedin_posts|portfolio)$")
     pdf_base64: str | None = Field(default=None, max_length=7_000_000)
+    zip_base64: str | None = Field(default=None, max_length=28_000_000)
     text: str | None = Field(default=None, max_length=60_000)
     url: str | None = Field(default=None, max_length=500)
+
+
+class LinksRequest(KeyRequest):
+    links: list[str] = Field(min_length=1, max_length=10)
 
 
 class Decision(BaseModel):
@@ -386,25 +392,125 @@ async def github_repos(req: GitHubRequest, request: Request):
         raise HTTPException(400, str(e)) from None
 
 
+class _Extractor:
+    """Runs extraction for one request: the user's model when there's a key, a plain split otherwise."""
+
+    def __init__(self, req: KeyRequest):
+        self.req = req
+        self.has_key = bool((req.key or "").strip() or server_key()[0])
+        self.llm: LLMClient | None = None
+        self.notes: list[str] = []
+
+    async def model(self) -> LLMClient | None:
+        if not self.has_key:
+            return None
+        if self.llm is None:
+            self.llm = make_llm(self.req)
+            if not self.llm.model:
+                self.llm.model = recommended_model(self.llm.provider, [m.id for m in await self.llm.list_models()]) or ""
+        return self.llm
+
+    async def run(self, text: str, source: str, prefix: str, url: str | None = None, posts: bool = False) -> list[EvidenceItem]:
+        try:
+            m = await self.model()
+            if m is not None:
+                return await extract_with_model(m, text, source, prefix, url, POSTS_SYSTEM if posts else EXTRACT_SYSTEM)
+            self._note("Read without a model. Add a model key in step 1 for a cleaner breakdown into roles, projects and skills.")
+        except LLMError as e:
+            self._note(f"The model couldn't read it ({e}), so a simpler split was used.")
+        return posts_plain(text, prefix) if posts else extract_plain(text, source, prefix, url)
+
+    def _note(self, note: str) -> None:
+        if note not in self.notes:
+            self.notes.append(note)
+
+
+@app.post("/api/evidence/links")
+async def links_evidence(req: LinksRequest, request: Request):
+    """Paste your links and you're done: GitHub profiles and repos, portfolio sites. LinkedIn links get a one-step
+    instruction instead, because LinkedIn doesn't let apps read profiles."""
+    rate_limit(request, "evidence")
+    ex = _Extractor(req)
+
+    async def one(link: str) -> dict:
+        kind, info = classify(link)
+        out: dict = {"link": link, "kind": kind, "evidence": [], "note": None, "error": None, "url": info.get("url")}
+        try:
+            if kind == "github_user":
+                items = await best_repos(info["user"])
+                out["note"] = f"Added {len(items)} of your top repositories. Remove any you don't want below."
+            elif kind == "github_repo":
+                items = await import_repos(info["user"], [info["repo"]])
+                if not items:
+                    raise GitHubError(f"Couldn't find the public repository {info['user']}/{info['repo']}.")
+                out["note"] = "Added this repository."
+            elif kind == "portfolio":
+                url, page = await fetch_page(info["url"])
+                text = html_to_text(page)
+                if len(text) < 80:
+                    raise SourceError("There's almost no text on that page; it may be built with JavaScript we can't run. Paste its text under More instead.")
+                items = await ex.run(text, "portfolio", "pf", url)
+                out["note"] = f"Found {len(items)} item{'s' if len(items) != 1 else ''} on your site."
+            elif kind == "linkedin":
+                out["note"] = "LinkedIn doesn't let apps read profiles from a link. Open it, click More → Save to PDF, and drop the file below."
+                return out
+            else:
+                out["error"] = "That doesn't look like a link."
+                return out
+            out["evidence"] = [e.model_dump() for e in items]
+        except (GitHubError, SourceError) as e:
+            out["error"] = str(e)
+        return out
+
+    results = await asyncio.gather(*(one(link) for link in split_links(" ".join(req.links))[:8]))
+    return {"results": list(results), "notes": ex.notes}
+
+
 @app.post("/api/evidence/profile")
 async def profile_evidence(req: ProfileRequest, request: Request):
-    """LinkedIn (its "Save to PDF" export, or pasted text) or a portfolio (URL or pasted text) -> evidence items."""
+    """LinkedIn (data archive ZIP, "Save to PDF", pasted profile text or pasted posts) or a portfolio (URL or text)
+    -> evidence items. `replaces` lists the ID prefixes of earlier imports this one supersedes."""
     rate_limit(request, "evidence")
-    url = None
+
+    def decode(b64: str) -> bytes:
+        try:
+            return base64.b64decode(b64, validate=False)
+        except ValueError:
+            raise HTTPException(400, "That file couldn't be read.") from None
+
+    ex = _Extractor(req)
+    notes = ex.notes
+    extract = ex.run
+
     try:
+        # LinkedIn data archive: structured files, plus posts read by the model.
+        if req.kind == "linkedin" and req.zip_base64:
+            archive = read_linkedin_archive(decode(req.zip_base64))
+            items, skills, posts_text = archive_items(archive)
+            post_items = await extract(posts_text, "linkedin", "lp", posts=True) if posts_text else []
+            n_posts = len([r for r in archive.get("shares", []) if r.get("sharecommentary")])
+            summary = f"Read {len(items)} profile items, {len(skills)} skills and {n_posts} posts ({len(post_items)} about your work)."
+            return {"evidence": [e.model_dump() for e in items + post_items], "skills": skills, "replaces": ["li", "la", "lp"],
+                    "used_model": ex.llm is not None, "note": " ".join([summary, *notes])}
+
+        if req.kind == "linkedin_posts":
+            text = (req.text or "").strip()[:30_000]
+            if len(text) < 60:
+                raise HTTPException(400, "Paste the text of one or more of your posts.")
+            items = await extract(text, "linkedin", "pp", posts=True)  # pasted posts add up across pastes
+            return {"evidence": [e.model_dump() for e in items], "skills": [], "replaces": [], "used_model": ex.llm is not None,
+                    "note": " ".join([f"Found {len(items)} post{'s' if len(items) != 1 else ''} about your work.", *notes])}
+
+        url = None
         if req.text and req.text.strip():
             text = req.text.strip()[:30_000]
         elif req.kind == "linkedin" and req.pdf_base64:
-            try:
-                data = base64.b64decode(req.pdf_base64, validate=False)
-            except ValueError:
-                raise HTTPException(400, "That file couldn't be read.") from None
-            text = pdf_to_text(data)
+            text = pdf_to_text(decode(req.pdf_base64))
         elif req.kind == "portfolio" and req.url:
             url, page = await fetch_page(req.url)
             text = html_to_text(page)
         else:
-            raise HTTPException(400, "Upload your LinkedIn PDF, give your portfolio's address, or paste the text.")
+            raise HTTPException(400, "Upload your LinkedIn PDF or archive, give your portfolio's address, or paste the text.")
     except SourceError as e:
         raise HTTPException(400, str(e)) from None
     if len(text) < 80:
@@ -412,21 +518,10 @@ async def profile_evidence(req: ProfileRequest, request: Request):
         raise HTTPException(400, "There's almost no text to read there." + hint)
 
     prefix = "li" if req.kind == "linkedin" else "pf"
-    has_key = bool((req.key or "").strip() or server_key()[0])
-    if not has_key:
-        items = extract_plain(text, req.kind, prefix, url)
-        return {"evidence": [e.model_dump() for e in items], "used_model": False, "chars": len(text),
-                "note": "Split into paragraphs without a model. Add a model key in step 1 for a cleaner breakdown into roles, projects and skills."}
-    llm = make_llm(req)
-    try:
-        if not llm.model:
-            llm.model = recommended_model(llm.provider, [m.id for m in await llm.list_models()]) or ""
-        items = await extract_with_model(llm, text, req.kind, prefix, url)
-    except LLMError as e:
-        items = extract_plain(text, req.kind, prefix, url)
-        return {"evidence": [e_.model_dump() for e_ in items], "used_model": False, "chars": len(text),
-                "note": f"The model couldn't read it ({e}), so it was split into paragraphs instead."}
-    return {"evidence": [e.model_dump() for e in items], "used_model": True, "chars": len(text), "note": None}
+    items = await extract(text, req.kind, prefix, url)
+    return {"evidence": [e.model_dump() for e in items], "skills": [], "replaces": ["li", "la"] if prefix == "li" else ["pf"],
+            "used_model": ex.llm is not None,
+            "note": " ".join([f"Found {len(items)} item{'s' if len(items) != 1 else ''}, each checked against the source.", *notes])}
 
 
 @app.post("/api/feedback")

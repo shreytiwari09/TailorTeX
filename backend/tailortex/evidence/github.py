@@ -14,6 +14,11 @@ API = "https://api.github.com"
 USERNAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
+# GitHub's language stats include build and config files; these aren't resume skills.
+_NOT_SKILLS = {"Makefile", "Mako", "Procfile", "Batchfile", "Roff", "Jinja", "Smarty", "Starlark", "Nix", "M4", "Rich Text Format"}
+_LANG_NAMES = {"Dockerfile": "Docker", "Jupyter Notebook": "Jupyter", "Vue": "Vue.js", "HCL": "Terraform (HCL)"}
+
+
 class GitHubError(Exception):
     pass
 
@@ -81,11 +86,22 @@ def clean_readme(md: str, limit: int = 900) -> str:
     return text[:limit].rsplit(" ", 1)[0] if len(text) > limit else text
 
 
-async def import_repos(username: str, names: list[str]) -> list[EvidenceItem]:
+async def best_repos(username: str, n: int = 6) -> list[EvidenceItem]:
+    """A user's strongest public work: their own repos, most stars first, then most recently worked on."""
+    repos = await list_repos(username)
+    own = [r for r in repos if not r["fork"]] or repos
+    own.sort(key=lambda r: r["pushed_at"] or "", reverse=True)
+    own.sort(key=lambda r: r["stars"], reverse=True)
+    if not own:
+        raise GitHubError(f"{username} has no public repositories.")
+    return await import_repos(username, [r["name"] for r in own[:n]], repos)
+
+
+async def import_repos(username: str, names: list[str], known: list[dict] | None = None) -> list[EvidenceItem]:
     if not USERNAME.match(username):
         raise GitHubError("That doesn't look like a GitHub username.")
     names = [n for n in names if re.fullmatch(r"[A-Za-z0-9._-]{1,100}", n)][:8]
-    repos = {r["name"]: r for r in await list_repos(username)}
+    repos = {r["name"]: r for r in (known if known is not None else await list_repos(username))}
     async with httpx.AsyncClient(timeout=20.0) as http:
 
         async def one(name: str) -> EvidenceItem | None:
@@ -99,7 +115,7 @@ async def import_repos(username: str, names: list[str]) -> list[EvidenceItem]:
             )
             langs: list[str] = []
             if isinstance(langs_r, httpx.Response) and langs_r.status_code == 200:
-                langs = list(langs_r.json().keys())[:6]
+                langs = [_LANG_NAMES.get(lang, lang) for lang in langs_r.json() if lang not in _NOT_SKILLS][:6]
             readme = ""
             if isinstance(readme_r, httpx.Response) and readme_r.status_code == 200:
                 readme = clean_readme(readme_r.text)
