@@ -114,6 +114,33 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 
 **Where data lives** is written up in the README: inputs in the browser, request data in server memory only for that request, and only anonymous style memory and strategy statistics kept on the server.
 
+## 12. From a single screen to a product: accounts, a stored knowledge base, saved resumes
+
+**What:** TailorTeX became a multi-page product. You sign up (email and password, or Google when `GOOGLE_CLIENT_ID` is set), fill in your details, paste the reference resume from Overleaf, add a model key, and build your context. Then you paste a job description and get a tailored resume, its PDF and ATS recommendations, all saved under your account. The no-login guest demo stays as it was (`/demo.html`), with its data in the browser.
+
+**Storage: PostgreSQL with pgvector, one database.** Details that rarely change (name, headline, links, the reference resume, notes, confirmed skills, model settings) are ordinary columns on `profiles`. Background entries (a repo, a LinkedIn role, one note line) are rows in `evidence_items` with a 384-dimension embedding from a small local model (`bge-small-en-v1.5` via fastembed, so nothing about you goes to an embedding service). Tailored resumes are rows in `runs`, with the PDF, so they can be reopened and rebuilt later. Every table cascades from `profiles`, so deleting an account deletes everything.
+
+**Ranking by meaning:** for a job, the entries closest to the job description's embedding are selected (plus your confirmed skills) and passed as evidence. "Event streaming" finds the Kafka note even though the words differ. The validators are unchanged: an entry can only back an edit if it was passed and cited, so a smarter search can't widen what may be claimed.
+
+**Accounts and secrets:**
+- Passwords are scrypt hashes. A session is a random token in an HttpOnly cookie; only its SHA-256 is stored.
+- The model key is encrypted with Fernet, keyed from `APP_SECRET`. If none is set the server generates one on first start and keeps it (mode 0600) in the data folder, so a fresh `docker compose up` works with no setup. The API never returns the key, only "saved" and the last four characters.
+- Google sign-in verifies the ID token against Google's public keys, the audience and the issuer. Tests cover a wrong audience and an expired token.
+
+**ATS recommendations (`ats/recommend.py`):** a prioritized list built in code from the run's own metrics, so it can't make things up: missing must-have keywords (marked "confirm you have this" when nothing backs them, or "use this from your context" when something does), keywords that appear only in the skills list, title mismatch with the wording to use, parse-health failures with the fix, and page space left for one more bullet.
+
+**The interface** is built from a design made in Google Stitch (Tailwind with the design's tokens, Inter and JetBrains Mono, React Router). Copy is kept short; explanations sit behind "i" popovers. I replaced the design's invented claims (fake user counts, stock photos of people) with true copy and a self-drawn example of what a result looks like, and kept the theme light only.
+
+**Firebase Authentication is future scope.** I first switched sign-in to Firebase (server verifies Firebase ID tokens and issues its own session cookie). The decision was to build the MVP with the sign-in we already had and to use Firebase only for auth later, with all data staying in PostgreSQL. The working version is parked on the `firebase-auth` branch, and `main` reverts it (commit `6db4b4f`).
+
+**Bugs found by using it:**
+- The phone header clipped "New tailoring" (a hidden class and an inline-flex class on one element); phones now get an icon-only button.
+- The single-page-app fallback answered unknown `/api/...` paths with 200 and the home page; they now return 404.
+- Bad-key detection: Gemini and OpenRouter accepted any key when listing models; both are now checked properly.
+- In Docker, the host `.env` (relative data folder, local TeX settings) overrode the image's settings through `env_file`, which would have put style memory outside the volume. Container settings are pinned in `docker-compose.yml` now. Found by running the container with the `.env` a fresh clone creates.
+
+**Docker:** `docker compose up --build` starts `pgvector/pgvector:pg17` and the app (TeX Live, poppler, and the embedding model baked in so the first search doesn't download 130 MB). `make dev` starts the same database for local development.
+
 ## Test status
 
-94 backend tests pass (`cd backend && ../.venv/bin/pytest -q`), including real pdfLaTeX compiles, the compiler's safety checks, and a full pipeline run with a scripted model. The frontend type-checks, lints clean and builds.
+104 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

@@ -1,5 +1,7 @@
 # TailorTeX: frontend design brief
 
+> Built: the app in `frontend/src/app/` follows this brief and the Stitch design made from it. This file stays as the record of what was asked for.
+
 Use this to design the app in Google Stitch. Paste **"1. Global brief"** first, then paste **one screen section at a time** (each starts with a one-line prompt you can use as is). The last section ("For developers") is not needed for design.
 
 ---
