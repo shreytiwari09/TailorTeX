@@ -314,7 +314,7 @@ export default function App() {
                 </button>
               ) : (
                 <button type="button" className="btn big full" disabled={blockers.length > 0} onClick={run}>
-                  <Icon name="spark" /> Tailor my resume
+                  <Icon name="wand" /> Tailor my resume
                 </button>
               )}
               {blockers.length > 0 && !running && <p className="hint center">To start, {blockers.join(', ')}.</p>}

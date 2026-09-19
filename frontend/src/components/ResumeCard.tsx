@@ -21,7 +21,7 @@ const TEMPLATE_NAMES: Record<string, string> = {
 
 export function ResumeCard({ tex, setTex, outline, parsing, parseError, onFix, onTemplate }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
-  const [showSource, setShowSource] = useState(!tex)
+  const [showSource, setShowSource] = useState(false)
   const [showOutline, setShowOutline] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
 
@@ -65,7 +65,7 @@ export function ResumeCard({ tex, setTex, outline, parsing, parseError, onFix, o
           <Icon name="upload" /> Upload .tex
         </button>
         <span className="muted small">or drop it here, or</span>
-        <button type="button" className="link" onClick={() => { setShowSource(true); if (!tex) onTemplate() }}>
+        <button type="button" className="link" onClick={() => { if (tex) setShowSource(true); else onTemplate() }}>
           {tex ? 'edit the source' : 'start from our ATS-safe template'}
         </button>
         <input ref={fileRef} type="file" accept=".tex,.txt" hidden onChange={(e) => onFile(e.target.files?.[0])} />
@@ -140,7 +140,7 @@ export function ResumeCard({ tex, setTex, outline, parsing, parseError, onFix, o
         </div>
       ))}
 
-      {showSource && (
+      {(showSource || !tex) && (
         <textarea
           className="code"
           value={tex}

@@ -330,7 +330,7 @@ def _check_text(
         bad = [x for x in items if not contains_term(pool, x) and x.lower() not in pool.lower()]
         if bad:
             return "invented_term", (
-                f"{', '.join(repr(b) for b in bad)} isn't on the resume or in the evidence bank. "
+                f"{', '.join(repr(b) for b in bad)} {_be(bad)} on the resume or in the evidence bank. "
                 "Skills lines can only list skills the candidate is shown to have."
             )
         if len(plain) > max(len(bl.text) * 2, len(bl.text) + 80):
@@ -350,16 +350,20 @@ def _check_text(
     if invented:
         where = "the resume or the evidence bank" if bl.kind == "summary" else "this entry or the evidence it cites"
         hint = "" if bl.kind == "summary" else " A skill used elsewhere can't be moved into this job; cite evidence if the candidate used it here."
-        return "invented_term", f"{', '.join(repr(w) for w in invented[:5])} isn't supported by {where}.{hint}"
+        return "invented_term", f"{', '.join(repr(w) for w in invented[:5])} {_be(invented)} supported by {where}.{hint}"
 
     allowed_numbers = metrics(number_pool)
     bad_numbers = [s for s, v, c in metrics(plain) if not _metric_allowed(v, c, allowed_numbers)]
     if bad_numbers:
         return "invented_number", (
-            f"{', '.join(repr(n) for n in bad_numbers[:5])} doesn't come from "
+            f"{', '.join(repr(n) for n in bad_numbers[:5])} {'doesn' if len(bad_numbers) == 1 else 'don'}'t come from "
             + ("the resume or evidence." if bl.kind == "summary" else "this bullet, its heading or cited evidence. Numbers can't move between bullets.")
         )
     return None
+
+
+def _be(items: list) -> str:
+    return "isn't" if len(items) == 1 else "aren't"
 
 
 def _in_text(pool: str, word: str) -> bool:
