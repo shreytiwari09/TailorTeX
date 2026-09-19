@@ -1,0 +1,29 @@
+Backend Engineer, Payments Platform
+Northstar Pay (fictional company, sample posting) · Bengaluru, India · Hybrid
+
+About the role
+Northstar Pay moves money for 40,000 small businesses. The Payments Platform team owns the APIs that create, route and settle every payment. We're looking for a backend engineer who cares about correctness, reliability and clean APIs.
+
+What you'll do
+- Design, build and operate REST APIs and microservices in Python that handle payment creation, refunds and settlement
+- Model and tune data in PostgreSQL; use Redis for caching and idempotency keys
+- Build event-driven pipelines with Kafka for settlement and reconciliation
+- Ship services in Docker containers on Kubernetes, with CI/CD through GitHub Actions
+- Write thorough automated tests (pytest) and own the services you build in production
+- Work with product, risk and finance teams on new payment flows
+
+What we're looking for
+- 1+ years of experience building backend services in Python (Flask, FastAPI or Django)
+- Strong SQL and PostgreSQL skills
+- Experience with REST API design and distributed systems basics (retries, idempotency, consistency)
+- Familiarity with Docker and Kubernetes
+- Comfortable with Git and code review
+
+Nice to have
+- Kafka or another message queue
+- AWS (EC2, S3, RDS)
+- Terraform or other infrastructure as code
+- gRPC
+- Experience in payments or fintech
+
+We are an equal opportunity employer. Benefits include health insurance, a learning budget and flexible hours.

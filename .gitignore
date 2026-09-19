@@ -26,7 +26,6 @@ data/
 .DS_Store
 .vscode/
 .idea/
-.claude/
 
 # Local notes kept out of the repo
 _prehackathon/
