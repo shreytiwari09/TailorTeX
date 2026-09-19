@@ -1,4 +1,21 @@
 services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: tailortex
+      POSTGRES_PASSWORD: tailortex
+      POSTGRES_DB: tailortex
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - tailortex-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tailortex"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   tailortex:
     build: .
     image: tailortex
@@ -7,9 +24,15 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tailortex:tailortex@db:5432/tailortex
     volumes:
       - tailortex-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   tailortex-data:
+  tailortex-db:
