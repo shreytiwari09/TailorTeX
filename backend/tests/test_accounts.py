@@ -19,7 +19,7 @@ from conftest import MockLLM
 from test_pipeline_learn import ANALYSIS, GOOD_PLAN
 
 TEST_DB = os.environ.get("TAILORTEX_TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not TEST_DB, reason="set TAILORTEX_TEST_DATABASE_URL to run database tests")
+needs_db = pytest.mark.skipif(not TEST_DB, reason="set TAILORTEX_TEST_DATABASE_URL to run database tests")
 
 JAKE = (Path(__file__).parents[1] / "tailortex" / "templates" / "jake" / "resume.tex").read_text()
 
@@ -73,6 +73,7 @@ def db_rows(sql: str, **params):
 # --- accounts ------------------------------------------------------------------------------------
 
 
+@needs_db
 def test_signup_signin_signout(client):
     profile = signup(client)
     assert profile["account"]["email"] == "asha@example.com" and profile["account"]["password"]
@@ -86,6 +87,7 @@ def test_signup_signin_signout(client):
     assert client.get("/api/profile").json()["id"] == profile["id"]
 
 
+@needs_db
 def test_google_sign_in_creates_then_reuses_and_links(client, monkeypatch):
     from tailortex.api import account
 
@@ -138,6 +140,7 @@ def test_google_token_verification(monkeypatch):
 # --- profile ----------------------------------------------------------------------------------------
 
 
+@needs_db
 def test_details_resume_and_encrypted_model_key(client, monkeypatch):
     from tailortex.llm.client import LLMClient, ModelInfo
 
@@ -170,6 +173,7 @@ def test_details_resume_and_encrypted_model_key(client, monkeypatch):
 # --- context ------------------------------------------------------------------------------------------
 
 
+@needs_db
 def test_context_links_linkedin_notes_edit_delete(client, monkeypatch):
     from tailortex.api import account
     from tailortex.types import EvidenceItem
@@ -220,6 +224,7 @@ def _stream(client, path, body):
     return events
 
 
+@needs_db
 def test_runs_use_stored_context_are_saved_and_private(client, monkeypatch):
     from tailortex.api import account
 
@@ -254,6 +259,7 @@ def test_runs_use_stored_context_are_saved_and_private(client, monkeypatch):
     assert client.delete(f"/api/runs/{result['saved_run_id']}").status_code == 404
 
 
+@needs_db
 def test_delete_account_removes_everything(client):
     signup(client)
     client.put("/api/profile/notes", json={"notes": "One\nTwo"})
@@ -266,6 +272,7 @@ def test_delete_account_removes_everything(client):
 
 
 @pytest.mark.skipif(os.environ.get("TAILORTEX_TEST_EMBEDDINGS") != "model", reason="needs the local embedding model")
+@needs_db
 def test_ranking_finds_by_meaning(client):
     from tailortex.db import engine, repo
     from tailortex.db.models import Profile
@@ -284,3 +291,21 @@ def test_ranking_finds_by_meaning(client):
 
     ranked = asyncio.run(go())
     assert ranked[0][0] == "n1", ranked
+
+
+def test_secret_is_generated_and_kept_when_app_secret_is_unset(monkeypatch, tmp_path):
+    from tailortex.db import crypto
+
+    monkeypatch.delenv("APP_SECRET", raising=False)
+    monkeypatch.setenv("TAILORTEX_DATA_DIR", str(tmp_path))
+    token = crypto.encrypt("sk-secret-key-value")
+    file = tmp_path / "app_secret"
+    assert file.exists() and oct(file.stat().st_mode)[-3:] == "600"
+    assert crypto.decrypt(token) == "sk-secret-key-value"        # the same secret is reused
+    monkeypatch.setenv("APP_SECRET", "a-different-secret-that-is-long-enough")
+    assert crypto.decrypt(token) is None                          # another secret can't read it
+    monkeypatch.setenv("APP_SECRET", "short")
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        crypto.encrypt("x")
