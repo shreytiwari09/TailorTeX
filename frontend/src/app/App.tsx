@@ -2,8 +2,12 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'rea
 import { AuthProvider, useAuth } from './auth'
 import { Shell } from './Shell'
 import { ContextPage } from './pages/ContextPage'
+import { Dashboard } from './pages/Dashboard'
 import { Landing } from './pages/Landing'
+import { NewResume } from './pages/NewResume'
 import { Onboarding } from './pages/Onboarding'
+import { RunPage } from './pages/RunPage'
+import { Settings } from './pages/Settings'
 import { Spinner } from './ui'
 
 function Splash() {
@@ -29,10 +33,6 @@ function Demo() {
   return <Splash />
 }
 
-function Placeholder({ name }: { name: string }) {
-  return <div className="py-space-2xl font-headline-md text-headline-md text-on-surface">{name} — coming next</div>
-}
-
 export function App() {
   return (
     <BrowserRouter>
@@ -45,11 +45,11 @@ export function App() {
           </Route>
           <Route element={<Protected />}>
             <Route element={<Shell />}>
-              <Route path="/dashboard" element={<Placeholder name="Resumes" />} />
-              <Route path="/new" element={<Placeholder name="New tailoring" />} />
-              <Route path="/runs/:id" element={<Placeholder name="Result" />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/new" element={<NewResume />} />
+              <Route path="/runs/:id" element={<RunPage />} />
               <Route path="/context" element={<ContextPage />} />
-              <Route path="/settings" element={<Placeholder name="Settings" />} />
+              <Route path="/settings" element={<Settings />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

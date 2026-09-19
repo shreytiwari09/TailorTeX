@@ -625,6 +625,8 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str):
+        if path == "api" or path.startswith(("api/", "assets/")):
+            raise HTTPException(404, "Not found.")
         file = (FRONTEND_DIST / path).resolve()
         if path and file.is_file() and FRONTEND_DIST.resolve() in file.parents:
             return FileResponse(file)

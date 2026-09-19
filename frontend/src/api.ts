@@ -100,6 +100,7 @@ export type Result = {
   blocked: Blocked[]
   left_out: { term: string; must: boolean; weight: number }[]
   suggestions: Suggestion[]
+  recommendations?: Recommendation[]
   fit_note: string | null
   tex: string
   pdf: string | null
@@ -108,6 +109,15 @@ export type Result = {
   engine: string
   usage: { provider: string; model: string; input_tokens: number; output_tokens: number; calls: number }
   warnings: string[]
+}
+export type Recommendation = {
+  priority: 'high' | 'medium' | 'low'
+  group: string
+  title: string
+  detail: string
+  action: 'none' | 'fix_source' | 'confirm_skill' | 'use_context'
+  term: string | null
+  evidence: string[]
 }
 export type Suggestion = {
   id: string

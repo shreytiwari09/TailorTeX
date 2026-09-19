@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, api, detectProvider, type Config, type ModelInfo, type Outline } from '../../api'
+import { ApiError, api } from '../../api'
 import { useAuth } from '../auth'
 import { acct, type Links } from '../client'
 import { EntryCard, LinkAdder, LinkedInAdder, NoteAdder, Status } from '../context'
+import { ModelEditor, ResumeEditor, type ModelChoice } from '../editors'
 import { useKnowledge } from '../knowledge'
-import { Avatar, Badge, Button, Card, Field, Icon, InfoTip, Logo, Notice, Spinner, TextArea, TextInput } from '../ui'
+import { Avatar, Button, Card, Field, Icon, InfoTip, Logo, Notice, TextInput } from '../ui'
 
 const STEPS = ['about', 'resume', 'context', 'done'] as const
 type Step = (typeof STEPS)[number]
@@ -134,85 +135,19 @@ function ResumeAndModel() {
   const { profile, setProfile } = useAuth()
   const navigate = useNavigate()
   const [tex, setTex] = useState(profile!.resume_tex)
-  const [outline, setOutline] = useState<{ tex: string; outline: Outline | null; error: string | null } | null>(null)
-  const [showOutline, setShowOutline] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (!tex.trim()) return
-    const t = setTimeout(() => {
-      api.parse(tex).then((o) => setOutline({ tex, outline: o, error: o.stats.sections === 0 ? 'No sections found. TailorTeX needs \\section{…} headings.' : null })).catch((e: Error) => setOutline({ tex, outline: null, error: e.message }))
-    }, 350)
-    return () => clearTimeout(t)
-  }, [tex])
-  const parsed = tex.trim() && outline?.tex === tex ? outline : null
-  const ok = !!parsed?.outline && !parsed.error && parsed.outline.stats.editable > 0
-
-  const pasteClipboard = async () => {
-    setMessage(null)
-    try {
-      const text = await navigator.clipboard.readText()
-      if (!text.includes('\\')) return setMessage("What's on your clipboard doesn't look like LaTeX. Copy the code from Overleaf's editor, not the PDF preview.")
-      setTex(text)
-    } catch {
-      setMessage('Your browser blocked clipboard access. Click in the box and press Ctrl/⌘ + V instead.')
-    }
-  }
-  const upload = async (f: File | undefined) => {
-    if (!f) return
-    if (!/\.(tex|txt)$/i.test(f.name)) return setMessage('Pick the main .tex file of your resume.')
-    if (f.size > 400_000) return setMessage('That file is larger than 400 KB.')
-    setTex(await f.text())
-  }
-  const fix = async (id: string) => {
-    const r = await api.lintFix(tex, id)
-    setTex(r.tex)
-  }
-
-  // model
-  const [config, setConfig] = useState<Config | null>(null)
-  const [key, setKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
-  const [providerPick, setProviderPick] = useState<string | null>(null)
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [model, setModel] = useState(profile!.model.model ?? '')
-  const [check, setCheck] = useState<{ kind: 'idle' | 'loading' | 'ok' | 'error'; text?: string }>({ kind: 'idle' })
-  const saved = profile!.model
-  const provider = providerPick ?? detectProvider(key) ?? saved.provider
-  useEffect(() => {
-    void api.config().then(setConfig).catch(() => undefined)
-  }, [])
-  useEffect(() => {
-    const k = key.trim()
-    if (!k) return
-    if (!provider) return
-    const t = setTimeout(async () => {
-      setCheck({ kind: 'loading' })
-      try {
-        const r = await api.models(k, provider)
-        setModels(r.models)
-        setModel((m) => (r.models.some((x) => x.id === m) ? m : r.recommended ?? r.models[0]?.id ?? ''))
-        setCheck({ kind: 'ok', text: `Key works · ${r.models.length} models` })
-      } catch (e) {
-        setModels([])
-        setCheck({ kind: 'error', text: e instanceof Error ? e.message : 'Could not check the key.' })
-      }
-    }, 500)
-    return () => clearTimeout(t)
-  }, [key, provider])
-  const keyOk = check.kind === 'ok' || (!key.trim() && saved.key_saved)
-  const needsProvider = key.trim().length > 10 && !provider
-
+  const [ok, setOk] = useState(false)
+  const [choice, setChoice] = useState<ModelChoice>({ key: '', provider: null, model: '', ready: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const saved = profile!.model
+
   const next = async () => {
     setBusy(true)
     setError(null)
     try {
       await acct.saveResume(tex)
-      if (key.trim()) await acct.saveModel({ provider, model: model || null, key: key.trim() })
-      else if (saved.key_saved && model && model !== saved.model) await acct.saveModel({ provider: saved.provider, model })
+      if (choice.key) await acct.saveModel({ provider: choice.provider, model: choice.model || null, key: choice.key })
+      else if (saved.key_saved && choice.model && choice.model !== saved.model) await acct.saveModel({ provider: saved.provider, model: choice.model })
       setProfile(await acct.profile())
       navigate('/onboarding/context')
     } catch (e) {
@@ -225,111 +160,13 @@ function ResumeAndModel() {
   return (
     <div className="flex flex-col gap-space-lg">
       <Heading title="Your resume" info="Only bullets, the summary and skills lines change. Education, headers and everything else stay exactly as written." />
-      <Card className="flex flex-col gap-space-md p-space-lg md:p-space-xl">
-        <ol className="list-decimal space-y-0.5 pl-5 font-body-sm text-body-sm text-on-surface-variant">
-          <li>In Overleaf, click inside the editor (your main <code className="font-code-sm">.tex</code> file).</li>
-          <li>Press Ctrl/⌘ A, then Ctrl/⌘ C.</li>
-          <li>Paste it below, or use the button.</li>
-        </ol>
-        <TextArea
-          value={tex}
-          onChange={(e) => setTex(e.target.value)}
-          rows={tex ? 12 : 7}
-          spellCheck={false}
-          aria-label="LaTeX source"
-          placeholder={'Paste your resume\'s LaTeX, from \\documentclass to \\end{document}'}
-          className="font-code-md text-code-md"
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={pasteClipboard}><Icon name="content_paste" className="text-[18px]" /> Paste from clipboard</Button>
-          <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}><Icon name="upload_file" className="text-[18px]" /> Upload .tex</Button>
-          {!tex.trim() && (
-            <Button variant="ghost" size="sm" onClick={async () => setTex((await api.template()).tex)}>Start from our template</Button>
-          )}
-          <input ref={fileRef} type="file" accept=".tex,.txt" hidden onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = '' }} />
-        </div>
-        {message && <Notice tone="warn">{message}</Notice>}
-        {tex.trim() && !parsed && <div className="flex items-center gap-2 font-body-sm text-body-sm text-on-surface-variant"><Spinner /> Reading your resume…</div>}
-        {parsed?.error && <Notice tone="bad">{parsed.error}</Notice>}
-        {parsed?.outline && !parsed.error && (
-          <div className="rounded-xl bg-surface-container-low p-space-md">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="good"><Icon name="check_circle" fill className="text-[16px]" /> Recognized</Badge>
-              <Badge>{{ jake: "Jake's Resume", 'awesome-cv': 'Awesome-CV', moderncv: 'moderncv', generic: 'Custom template' }[parsed.outline.profile] ?? parsed.outline.profile}</Badge>
-              <span className="font-body-sm text-body-sm text-on-surface">
-                {parsed.outline.stats.sections} sections · {parsed.outline.stats.bullets} bullets · {parsed.outline.stats.editable} editable
-              </span>
-              <button type="button" onClick={() => setShowOutline((s) => !s)} className="font-label-sm text-label-sm text-primary hover:underline">
-                {showOutline ? 'Hide' : 'Show'} what we see
-              </button>
-            </div>
-            {showOutline && (
-              <div className="mt-3 max-h-72 overflow-auto rounded-lg bg-surface-container-lowest p-3 font-code-sm text-code-sm">
-                {parsed.outline.sections.map((s) => (
-                  <div key={s.id} className="mb-2">
-                    <div className="flex items-center gap-2 font-semibold text-on-surface">{s.title} {s.locked && <Badge className="font-normal"><Icon name="lock" className="text-[12px]" /> kept as is</Badge>}</div>
-                    {s.blocks.map((b) => <div key={b.id} className="pl-3 text-on-surface-variant">{b.label ? `${b.label}: ` : ''}{b.text}</div>)}
-                    {s.entries.map((e) => (
-                      <div key={e.id} className="pl-3">
-                        <div className="text-on-surface">{e.heading}</div>
-                        {e.bullets.map((b) => <div key={b.id} className={`pl-3 ${b.locked ? 'text-outline' : 'text-on-surface-variant'}`}>• {b.text.replace(/\*\*/g, '')}</div>)}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {parsed?.outline?.lint.filter((l) => l.severity === 'warn').map((w) => (
-          <Notice key={w.id} tone="warn">
-            <div className="flex flex-wrap items-center justify-between gap-2"><span>{w.message}</span>{w.fixable && <Button size="sm" variant="secondary" onClick={() => fix(w.id)}>Fix it</Button>}</div>
-          </Notice>
-        ))}
-      </Card>
-
+      <Card className="p-space-lg md:p-space-xl"><ResumeEditor tex={tex} setTex={setTex} onValid={setOk} /></Card>
       <Heading title="AI model" info="Your key is stored encrypted in your account and used only for your requests. You can remove it any time in Settings." />
-      <Card className="flex flex-col gap-space-md p-space-lg md:p-space-xl">
-        {saved.key_saved && !key.trim() && (
-          <Notice tone="good">A key is already saved ({saved.key_hint}) for {saved.provider}. Paste a new one to replace it.</Notice>
-        )}
-        <Field label="API key" hint={config ? undefined : undefined}>
-          <div className="flex gap-2">
-            <TextInput type={showKey ? 'text' : 'password'} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste a key: AIza…, gsk_…, sk-…, sk-ant-…, sk-or-…" autoComplete="off" spellCheck={false} />
-            <Button variant="ghost" onClick={() => setShowKey((s) => !s)}>{showKey ? 'Hide' : 'Show'}</Button>
-          </div>
-        </Field>
-        {needsProvider && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-body-sm text-body-sm text-on-surface-variant">Which provider?</span>
-            {config?.providers.map((p) => (
-              <button key={p.id} type="button" onClick={() => setProviderPick(p.id)} className={`rounded-full border px-3 py-1 font-label-sm text-label-sm ${providerPick === p.id ? 'border-primary-container bg-primary-fixed/40 text-primary' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-low'}`}>{p.label}</button>
-            ))}
-          </div>
-        )}
-        {check.kind === 'loading' && <div className="flex items-center gap-2 font-body-sm text-body-sm text-on-surface-variant"><Spinner /> Checking the key…</div>}
-        {check.kind === 'error' && <Notice tone="bad">{check.text}</Notice>}
-        {check.kind === 'ok' && <Notice tone="good">{check.text}</Notice>}
-        {models.length > 0 && (
-          <Field label="Model">
-            <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full rounded-lg border border-outline-variant bg-surface-container-low px-3.5 py-2.5 font-body-md text-body-md">
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id}</option>)}
-            </select>
-          </Field>
-        )}
-        {!key.trim() && !saved.key_saved && config && (
-          <div className="flex flex-wrap items-center gap-1.5 font-body-sm text-body-sm text-on-surface-variant">
-            <span>Need a key? These have free tiers:</span>
-            {config.providers.filter((p) => p.free_tier).map((p) => (
-              <a key={p.id} href={p.key_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full bg-primary-fixed/50 px-2.5 py-0.5 font-label-sm text-label-sm text-primary hover:bg-primary-fixed">{p.label} <Icon name="north_east" className="text-[12px]" /></a>
-            ))}
-          </div>
-        )}
-      </Card>
+      <Card className="p-space-lg md:p-space-xl"><ModelEditor saved={saved} onChange={setChoice} /></Card>
       {error && <Notice tone="bad">{error}</Notice>}
       <div className="flex items-center justify-between">
         <Link to="/onboarding/about" className="font-label-md text-label-md text-on-surface-variant hover:text-on-surface">Back</Link>
-        <Button size="lg" loading={busy} disabled={!ok || !keyOk} onClick={next}>Continue <Icon name="arrow_forward" className="text-[18px]" /></Button>
+        <Button size="lg" loading={busy} disabled={!ok || !choice.ready} onClick={next}>Continue <Icon name="arrow_forward" className="text-[18px]" /></Button>
       </div>
     </div>
   )

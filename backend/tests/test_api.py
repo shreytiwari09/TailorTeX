@@ -95,3 +95,8 @@ def test_rate_limit(client):
 def test_clean_readme():
     md = "# Ledgerly\n![badge](x.svg) [![ci](y)](z)\n\nA **double-entry** API in [Go](https://go.dev).\n\n```sh\nmake run\n```\n| a | b |\n- Deployed on Kubernetes\n"
     assert clean_readme(md) == "Ledgerly. A double-entry API in Go. Deployed on Kubernetes."
+
+
+def test_unknown_api_paths_are_404_not_the_web_page(client):
+    r = client.get("/api/does-not-exist")
+    assert r.status_code == 404 and "text/html" not in r.headers.get("content-type", "")

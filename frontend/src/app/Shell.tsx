@@ -42,21 +42,26 @@ export function Shell() {
                   key={n.to}
                   to={n.to}
                   className={({ isActive }) =>
-                    `rounded-full px-3 py-1.5 font-label-md text-label-md transition-all ${isActive ? 'bg-surface-container font-semibold text-on-surface' : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'}`
+                    `whitespace-nowrap rounded-full px-3 py-1.5 font-label-md text-label-md transition-all ${isActive ? 'bg-surface-container font-semibold text-on-surface' : 'text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface'}`
                   }
                 >
                   {n.label}
                 </NavLink>
               ))}
-              <a href="/docs" target="_blank" rel="noreferrer" className="hidden rounded-full px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-all hover:bg-surface-container-low hover:text-on-surface sm:block">
+              <a href="/docs" target="_blank" rel="noreferrer" className="hidden whitespace-nowrap rounded-full px-3 py-1.5 font-label-md text-label-md text-on-surface-variant transition-all hover:bg-surface-container-low hover:text-on-surface sm:block">
                 API
               </a>
             </nav>
           </div>
           <div className="flex items-center gap-space-md">
-            <LinkButton to="/new" size="sm" className="hidden sm:inline-flex">
-              <Icon name="add" className="text-[16px]" /> New tailoring
-            </LinkButton>
+            <div className="hidden sm:block">
+              <LinkButton to="/new" size="sm">
+                <Icon name="add" className="text-[16px]" /> New tailoring
+              </LinkButton>
+            </div>
+            <Link to="/new" aria-label="New tailoring" className="flex h-9 w-9 items-center justify-center rounded-full bg-primary-container text-on-primary-container shadow-sm sm:hidden">
+              <Icon name="add" className="text-[20px]" />
+            </Link>
             <div ref={ref} className="relative">
               <button type="button" aria-label="Account menu" aria-expanded={menu} onClick={() => setMenu((m) => !m)} className="flex items-center rounded-full ring-offset-2 focus-visible:outline-2 focus-visible:outline-primary-container">
                 <Avatar name={name} url={profile?.account.avatar_url} />

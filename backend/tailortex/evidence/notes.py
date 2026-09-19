@@ -27,6 +27,6 @@ def note_lines(notes: str) -> list[str]:
 
 def notes_to_evidence(notes: str) -> list[EvidenceItem]:
     return [
-        EvidenceItem(id=f"n{i}", source="fact", title="Your notes", text=line, skills=known_skills(line))
+        EvidenceItem(id=f"n{i}", source="fact", title=(line if len(line) <= 60 else line[:58].rstrip() + "…"), text=line, skills=known_skills(line))
         for i, line in enumerate(note_lines(notes), 1)
     ]
