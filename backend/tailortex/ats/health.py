@@ -48,7 +48,7 @@ def parse_health(text: str, doc: ParsedResume) -> list[Check]:
         1.5,
     ))
 
-    garbage = re.findall(r"[\ue000-\uf8ff\ufffd\x00-\x08\x0b\x0c\x0e-\x1f]", text)
+    garbage = re.findall(r"[\ue000-\uf8ff\ufffd\x00-\x08\x0b\x0e-\x1f]", text)  # \f is a page break
     checks.append(Check(
         "garbage", "No unreadable symbols", not garbage,
         "Clean" if not garbage else f"{len(garbage)} unreadable characters (often icon fonts); replace icons with plain labels",
