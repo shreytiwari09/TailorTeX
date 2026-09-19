@@ -37,6 +37,8 @@ from ..types import EvidenceItem, JobAnalysis
 from ..validate.validate import ValidationContext, Violation, validate_ops
 
 Emit = Callable[[dict], Awaitable[None]]
+# Picks the background items to use for a job: (items to use, a message for the progress log).
+Ranker = Callable[[JobAnalysis, list[EvidenceItem]], Awaitable[tuple[list[EvidenceItem], str | None]]]
 MAX_RETRIES = 2
 MAX_FIT_DROPS = 8
 
@@ -404,7 +406,10 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
     }
 
 
-async def tailor(inp: TailorInput, llm: LLMClient, emit: Emit = _noop, bandit: Bandit | None = None, style_memory: StyleMemory | None = None) -> dict:
+async def tailor(
+    inp: TailorInput, llm: LLMClient, emit: Emit = _noop, bandit: Bandit | None = None,
+    style_memory: StyleMemory | None = None, ranker: Ranker | None = None,
+) -> dict:
     run_id = uuid.uuid4().hex[:12]
     warnings: list[str] = []
     doc = parse_resume(inp.tex)
@@ -450,6 +455,12 @@ async def tailor(inp: TailorInput, llm: LLMClient, emit: Emit = _noop, bandit: B
         f"{analysis.title or 'Role'}" + (f" at {analysis.company}" if analysis.company else "") + f": {len(analysis.must_have)} must-haves, {len(analysis.nice_to_have)} nice-to-haves",
         {"analysis": analysis.model_dump()},
     ))
+
+    if ranker is not None and inp.evidence:
+        await emit(_event("background", "start", "Finding what in your background fits this job"))
+        inp.evidence, message = await ranker(analysis, inp.evidence)
+        if message:
+            await emit(_event("background", "done", message))
 
     gaps = gap_analysis(doc, analysis, inp.evidence)
     counts = {k: sum(1 for g in gaps if g.status == k) for k in ("present", "evidence", "missing")}
