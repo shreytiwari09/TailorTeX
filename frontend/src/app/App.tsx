@@ -1,7 +1,9 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth'
 import { Shell } from './Shell'
+import { ContextPage } from './pages/ContextPage'
 import { Landing } from './pages/Landing'
+import { Onboarding } from './pages/Onboarding'
 import { Spinner } from './ui'
 
 function Splash() {
@@ -39,14 +41,14 @@ export function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/demo" element={<Demo />} />
           <Route element={<Protected onboarding />}>
-            <Route path="/onboarding/:step" element={<Placeholder name="Onboarding" />} />
+            <Route path="/onboarding/:step" element={<Onboarding />} />
           </Route>
           <Route element={<Protected />}>
             <Route element={<Shell />}>
               <Route path="/dashboard" element={<Placeholder name="Resumes" />} />
               <Route path="/new" element={<Placeholder name="New tailoring" />} />
               <Route path="/runs/:id" element={<Placeholder name="Result" />} />
-              <Route path="/context" element={<Placeholder name="My context" />} />
+              <Route path="/context" element={<ContextPage />} />
               <Route path="/settings" element={<Placeholder name="Settings" />} />
             </Route>
           </Route>

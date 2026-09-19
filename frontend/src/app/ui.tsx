@@ -119,11 +119,11 @@ export function Field({ label, hint, info, children, className = '' }: { label: 
 export const inputClass =
   'w-full rounded-lg border border-outline-variant bg-surface-container-low px-3.5 py-2.5 font-body-md text-body-md text-on-surface placeholder:text-outline transition focus:border-primary-container focus:bg-surface-container-lowest focus:outline-none focus:ring-4 focus:ring-primary-container/10'
 
-export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+export function TextInput(props: React.ComponentProps<'input'>) {
   return <input {...props} className={`${inputClass} ${props.className ?? ''}`} />
 }
 
-export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function TextArea(props: React.ComponentProps<'textarea'>) {
   return <textarea {...props} className={`${inputClass} resize-y ${props.className ?? ''}`} />
 }
 
