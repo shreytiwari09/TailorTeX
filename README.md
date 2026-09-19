@@ -2,9 +2,11 @@
 
 **Tailor your LaTeX resume to every job description, without breaking your template or inventing anything.**
 
-Paste a job description and get back *your own* `.tex` file with the job's keywords worked into the right places, a compiled PDF, and an honest report of what changed and why. Every new skill, tool and number is checked in code against your real experience before it reaches your resume.
+Set up your profile once (your resume, your GitHub, portfolio, LinkedIn and notes), then paste any job description and get back *your own* `.tex` file with the job's keywords worked into the right places, a compiled PDF, ATS recommendations, and an honest report of what changed and why. Every new skill, tool and number is checked in code against what you can actually back up.
 
 Built for **HackDevengers 2.0** (19–20 September 2026).
+
+**Try it without signing up:** run the app and click *Try the demo with a sample resume* on the landing page.
 
 ---
 
@@ -15,43 +17,53 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **Edit by hand for every job.** Slow, and easy to miss the keywords that matter.
 - **Paste the resume into an AI chat.** It regenerates the whole file: the template breaks, it often doesn't compile, and it happily invents skills ("Kubernetes") and metrics ("improved performance by 40%") the candidate can't defend in an interview.
 
+
 ## What TailorTeX does
 
 - **LaTeX in, LaTeX out.** Your template stays byte-for-byte intact. Only bullets, the summary and skills lines change, and every change is a precise edit at a known position.
 - **Always compiles.** The model never writes LaTeX. It returns edit operations in plain text, and TailorTeX writes the LaTeX itself with an escaper that can't produce broken markup.
-- **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from evidence you provided. Rejected edits go back to the model with the reason.
-- **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it, not on a made-up score.
-- **Knows your background.** Add your GitHub link (top repositories are picked automatically), your portfolio link, your LinkedIn PDF (Save to PDF on your profile), and anything else about you in plain sentences. Your model breaks it into roles, projects and skills, each checked against the source, and TailorTeX suggests what's worth adding for each job. Job keywords with no proof are asked about, never slipped in.
-- **Review everything.** Word-level diff for every change with the reason and evidence behind it. Keep, revert or edit each one, then rebuild the PDF.
+- **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from your context. Rejected edits go back to the model with the reason, and you see them.
+- **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it. Each run ends with prioritized recommendations.
+- **A permanent profile per person.** Sign in once. Your details, reference resume, model key (encrypted) and every tailored resume are saved, so you can generate resumes for different jobs again and again.
+- **A knowledge base the model draws on.** GitHub link, portfolio link, LinkedIn PDF and free-text notes become entries in PostgreSQL with pgvector embeddings. For each job, TailorTeX finds the entries closest in meaning (so "event streaming" finds your Kafka note) and only adds what those entries back.
+- **Review everything.** Word-level diff for every change with the reason and what backs it. Keep, revert or edit each one, then rebuild the PDF.
 - **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live.
-- **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each user's writing style.
+- **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each person's writing style.
+
+## The product flow
+
+Landing and sign-in → **About you** → **Resume and model** → **Your context** → dashboard of tailored resumes → **New tailoring** (paste the job, live pipeline) → **Result** (scores, changes, ATS recommendations, keyword matrix, guardrails, PDF and LaTeX) → export as PDF, `.tex`, or Overleaf. **My context** and **Settings** are always one click away. The screens follow a design made in Google Stitch (see [docs/FRONTEND_SPEC.md](docs/FRONTEND_SPEC.md) for the brief).
 
 ## Quick start
 
-Needs **Python 3.11+**, **Node 20+**, and **TeX Live** for PDF compiling (TinyTeX is enough: `curl -sL https://yihui.org/tinytex/install-bin-unix.sh | sh`; without it you still get the tailored `.tex`).
+Needs **Python 3.11+**, **Node 20+**, **Docker** (for the database), and **TeX Live** for PDF compiling (TinyTeX is enough: `curl -sL https://yihui.org/tinytex/install-bin-unix.sh | sh`; without it you still get the tailored `.tex`).
 
 ```sh
 git clone https://github.com/shreytiwari09/TailorTex.git
 cd TailorTex
 make setup   # Python venv + backend deps, frontend deps, creates .env
-make dev     # backend on :8000, frontend on http://localhost:5173
+make dev     # starts PostgreSQL in Docker, the backend on :8000, the app on http://localhost:5173
 ```
 
-**Or with Docker** (no Python, Node or LaTeX needed; the image includes TeX Live):
+Open http://localhost:5173, create an account, and follow the four setup steps. You need a model key (Gemini and Groq have free tiers).
+
+**Or everything in Docker** (no Python, Node or LaTeX needed; the image includes TeX Live and the embedding model):
 
 ```sh
-docker compose up --build    # or: make docker
+docker compose up --build    # or: make docker     then open http://localhost:8000
 ```
 
-Open http://localhost:5173 (http://localhost:8000 with Docker), click **Try it with a sample resume**, paste a model key in step 1 and press **Tailor my resume**. To use your own resume, copy its LaTeX from Overleaf (click in the editor, Ctrl/Cmd+A, Ctrl/Cmd+C) and paste it into step 2. Gemini and Groq have free tiers. To give everyone who uses your server a default key, set `TAILORTEX_API_KEY` in `.env`.
-
-Other commands:
+No configuration is needed. The secret that encrypts saved model keys is generated on first start and kept in the data volume; set `APP_SECRET` in `.env` for a hosted deployment where that volume doesn't persist. Without a database the app still runs in no-login demo mode.
 
 | Command | What it does |
 |---|---|
-| `make test` | 94 backend tests (including real LaTeX compiles), frontend type-check and lint |
+| `make test` | Backend tests (including real LaTeX compiles and, with `TAILORTEX_TEST_DATABASE_URL`, real PostgreSQL), frontend type-check and lint |
 | `make start` | Build the frontend and serve the whole app from the backend on :8000 |
+| `make db` | Start just the database |
 | API docs | http://localhost:8000/docs (interactive, from FastAPI) |
+
+Settings (all optional) are in [.env.example](.env.example): `DATABASE_URL`, `APP_SECRET`, `GOOGLE_CLIENT_ID` (adds a "Continue with Google" button), a shared `TAILORTEX_API_KEY` for the demo, and the TeX location.
+
 
 ## How it works
 
@@ -101,62 +113,75 @@ Jake's Resume and its many variants, Awesome-CV, moderncv, and generic `article`
 backend/
   tailortex/
     latex/      scanner with exact offsets, LaTeX <-> plain text, resume parser, span editor
-    ats/        keyword matching and synonyms, coverage, gap chips, title match, parse health, lint
+    ats/        keyword matching and synonyms, coverage, gap chips, title match, parse health, lint, recommendations
     validate/   the no-invention rules
     compile/    TeX Live runner: engine detection, safety checks, page count, PDF text, page fill
     llm/        bring-your-own-key client for 7 providers, prompts, output schemas
     learn/      strategy arms, Thompson-sampling bandit, feedback reward, style memory
     pipeline/   the tailoring run and the rebuild after review
     reward/     the reward function (layer 0 of the learning loop)
-    evidence/   background sources: GitHub, LinkedIn PDF, portfolio pages, verified extraction
-    api/        FastAPI app (REST + server-sent events)
-  tests/        pytest: 94 tests, including real LaTeX compiles and a mock-model pipeline run
-frontend/       React + Vite + TypeScript single-page app
-docs/           product plan and development log
+    evidence/   background sources: GitHub, LinkedIn PDF, portfolio pages, notes, verified extraction
+    db/         PostgreSQL + pgvector: profiles, sessions, context entries with embeddings, saved runs
+    api/        FastAPI app: guest endpoints (main.py) and the signed-in product (account.py)
+  tests/        pytest, including real LaTeX compiles, a mock-model pipeline run and a real PostgreSQL
+frontend/
+  src/app/      the product: routes, sign-in state, Tailwind design tokens, the screens
+  src/          the no-login demo (its own entry, demo.html)
+docs/           product plan, development log, frontend design brief
 ```
 
 ## API
 
+Guest (no account, everything in the request):
+
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/config` | Providers, whether LaTeX is installed, whether the server has a key |
-| `POST /api/models` | Check a key and list the provider's chat models, with a recommended default |
-| `POST /api/parse` | What TailorTeX sees in a `.tex`: sections, entries, bullets, locks, lint |
-| `POST /api/compile` | Compile a `.tex` safely; returns the PDF, pages and errors with line numbers |
+| `GET /api/config` | Providers, whether LaTeX is installed |
+| `POST /api/models` | Check a key and list the provider's chat models |
+| `POST /api/parse`, `/api/lint/fix`, `/api/compile` | What TailorTeX sees in a `.tex`, one-click fixes, safe compile |
 | `POST /api/tailor` | The full run, streamed as server-sent events; the last event is the result |
-| `POST /api/rebuild` | Re-apply the changes you kept or edited, recompile and re-measure |
-| `POST /api/evidence/github` | List a user's public repos, or import chosen ones as evidence |
-| `POST /api/evidence/links` | GitHub profile or repo links and portfolio sites, read into evidence |
-| `POST /api/evidence/profile` | LinkedIn PDF, data export (with posts) or text, or portfolio text, broken into verified evidence items |
-| `POST /api/feedback` | Keep / revert / edit decisions: rewards the bandit and updates style memory |
-| `POST /api/forget` | Delete what the server learned from this browser (style memory, its strategy statistics) |
+| `POST /api/rebuild`, `/api/feedback` | Re-apply kept and edited changes; keep/revert decisions train the bandit |
+
+Signed in (session cookie):
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/auth/signup`, `/signin`, `/google`, `/signout`; `GET /api/auth/me`, `/config` | Accounts |
+| `GET/PUT /api/profile`, `PUT /api/profile/resume`, `/model`, `/notes`, `/skills`; `DELETE /api/profile` | Your details, reference resume, encrypted model key, notes, skills; delete everything |
+| `GET /api/profile/context`; `POST /api/profile/context/links`, `/linkedin`; `PATCH`/`DELETE /api/profile/context/{id}` | Your knowledge base |
+| `POST /api/runs` (streamed), `GET /api/runs`, `GET/DELETE /api/runs/{id}`, `POST /api/runs/{id}/rebuild` | Tailor from your stored profile and context; history |
 
 ## Where your data is stored
 
 | What | Where | For how long |
 |---|---|---|
-| Your resume, job description, links, notes, imported GitHub/portfolio/LinkedIn items | Your browser (`localStorage`) | Until you click **Delete my data** or clear site data |
-| Your model key | Your browser: this tab (`sessionStorage`), and `localStorage` if "Remember on this device" is on | Same as above; never on the server |
-| Anything you send for a run (resume, job, background) | Server memory, for that one request | Discarded when the request ends; LaTeX compiles in a temp folder that is deleted right after |
-| LinkedIn PDF or export | Server memory, while it's read | Discarded; only the extracted items go back to your browser |
-| Style memory: up to 8 bullets you kept or edited and a few style rules, under an anonymous ID for your browser | The server's `data/style.json` (the `tailortex-data` volume in Docker) | Until you click **Delete my data** |
-| Strategy statistics (which tailoring strategy worked for which kind of job) | The server's `data/bandit.json` | Kept; your own table is removed by **Delete my data**, the anonymous totals stay |
+| Account, details, reference resume, notes, confirmed skills | PostgreSQL (`profiles`) | Until you delete your account |
+| Your model API key | PostgreSQL, **encrypted** (Fernet, key from `APP_SECRET` or a generated secret). Never sent back to the browser: the API only says a key is saved and shows its last four characters | Until you remove it or delete your account |
+| Context entries (GitHub, portfolio, LinkedIn, notes) and their embeddings | PostgreSQL with pgvector (`evidence_items`) | Until you delete them or your account |
+| Tailored resumes (job description, `.tex`, PDF, report) | PostgreSQL (`runs`) | Until you delete them or your account |
+| Sessions | An HttpOnly cookie in your browser; PostgreSQL keeps only a hash of the token | 30 days, or until you sign out |
+| Style memory and strategy statistics | `data/` on the server (a Docker volume), under your anonymous profile ID | Deleted with your account (the anonymous strategy totals stay) |
+| LinkedIn PDF and web pages you point it at | Server memory while they are read; only the extracted entries are kept | Discarded straight away |
+| **No-login demo** | Your browser only (`localStorage`) | Until you clear it |
 
-Your resume, job description and background are sent to the model provider you choose, and your GitHub username to GitHub's public API. Nothing else leaves the server, and request bodies are never logged.
+Your resume, job description and context are sent to the model provider you choose, and your GitHub username to GitHub's public API. Nothing else leaves the server, and request bodies are never logged. **Delete my account** in Settings removes everything above.
 
 ## Security and privacy
 
-- **Keys** are sent with each request, used in memory for that request, and never stored or logged. "Remember on this device" keeps a key in your browser only.
-- **Your resume and job description** go only to the model provider you choose.
+- **Passwords** are stored as scrypt hashes; **session tokens** as SHA-256 hashes. Sign-in is rate limited.
+- **Model keys** are encrypted at rest and never returned by the API. In the no-login demo a key stays in your browser.
 - **Compiling LaTeX runs code**, so documents that write files, run shell commands, read files outside the project or run Lua are refused before TeX starts. TeX runs with shell escape off, paranoid file access, a fresh temp folder and a timeout.
-- **Job descriptions and READMEs are untrusted data.** A prompt injection can only produce edit operations, and the validators block anything unsupported.
+- **Web pages you add are fetched safely:** only http(s), and private, loopback and cloud-metadata addresses are refused, including after redirects.
+- **Job descriptions, READMEs and LinkedIn text are untrusted data.** A prompt injection can only produce edit operations, and the validators block anything unsupported. Extracted context is checked against its source text too.
+- Every account only ever reads its own rows; there are tests for it.
 
 ## Roadmap
 
-- Docker image and a public deployment
-- Accounts and per-job history, PDF/DOCX import into the default template
-- Chrome extension to capture job descriptions, application tracker with callbacks as a learning signal
-- A small open model fine-tuned on accepted edits (SFT, then preference training), so tailoring works without a key
+- Firebase Authentication (Google and email link) in place of the built-in sign-in. A working version is on the `firebase-auth` branch.
+- Application tracking (interviewing, archived) on the dashboard, and callbacks as a learning signal.
+- The new design for the no-login demo, a dark theme, and mobile polish.
+- A small open model fine-tuned on accepted edits, so tailoring works without a key.
+- Chrome extension to capture job descriptions.
 
 ## About this project
 
