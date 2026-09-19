@@ -25,7 +25,8 @@ RUN apt-get update \
       poppler-utils \
  && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-RUN useradd --create-home --uid 10001 app && mkdir -p /data && chown app /data
+RUN useradd --create-home --uid 10001 app && mkdir -p /data /opt/fastembed && chown app /data /opt/fastembed
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
@@ -33,6 +34,8 @@ COPY backend/tailortex backend/tailortex
 COPY --from=web /web/dist frontend/dist
 
 USER app
+# Download the small embedding model now (about 130 MB), so matching by meaning works without a runtime download.
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warm up'])); print('embedding model ready')"
 # Compile the default template once, to check TeX works and warm the font caches.
 RUN cd backend && python -c "from pathlib import Path; from tailortex.compile.compile import compile_latex; r = compile_latex(Path('tailortex/templates/jake/resume.tex').read_text()); assert r.ok, r.errors; print('TeX OK:', r.pages, 'page')"
 
