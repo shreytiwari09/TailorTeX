@@ -36,6 +36,16 @@ def client(monkeypatch):
     monkeypatch.setenv("TAILORTEX_API_KEY", "")
     main._hits.clear()
 
+    from tailortex.api import account
+
+    async def fake_verify(id_token):
+        """Test tokens look like 'uid|email|name'; the real verification is tested separately below."""
+        uid, email, name = (id_token.split("|") + ["", ""])[:3]
+        return {"sub": uid, "email": email, "email_verified": True, "name": name, "picture": "https://x/p.png",
+                "firebase": {"sign_in_provider": "google.com"}}
+
+    monkeypatch.setattr(account, "verify", fake_verify)
+
     async def reset():
         await engine.init_db()
         async with engine._engine.begin() as conn:  # type: ignore[union-attr]
@@ -48,8 +58,9 @@ def client(monkeypatch):
     asyncio.run(engine.dispose())
 
 
-def signup(client, email="asha@example.com", password="correct horse 1"):
-    r = client.post("/api/auth/signup", json={"email": email, "password": password, "full_name": ""})
+def signup(client, email="asha@example.com", name=""):
+    """Sign in (creating the profile the first time) through the Firebase route."""
+    r = client.post("/api/auth/firebase", json={"id_token": f"uid-{email}|{email}|{name}"})
     assert r.status_code == 200, r.text
     return r.json()["profile"]
 
@@ -73,66 +84,86 @@ def db_rows(sql: str, **params):
 # --- accounts ------------------------------------------------------------------------------------
 
 
-def test_signup_signin_signout(client):
-    profile = signup(client)
-    assert profile["account"]["email"] == "asha@example.com" and profile["account"]["password"]
+def test_sign_in_creates_reuses_and_signs_out(client):
+    r = client.post("/api/auth/firebase", json={"id_token": "uid-1|asha@example.com|Asha Rao"})
+    body = r.json()
+    assert body["created"] is True and body["profile"]["account"]["email"] == "asha@example.com"
+    assert body["profile"]["details"]["full_name"] == "Asha Rao" and body["profile"]["account"]["avatar_url"]
+    assert "httponly" in r.headers["set-cookie"].lower()
     assert client.get("/api/auth/me").json()["signed_in"] is True
-    assert client.post("/api/auth/signup", json={"email": "ASHA@example.com", "password": "another pass"}).status_code == 400
     client.post("/api/auth/signout")
     assert client.get("/api/auth/me").json()["signed_in"] is False
     assert client.get("/api/profile").status_code == 401
-    assert client.post("/api/auth/signin", json={"email": "asha@example.com", "password": "wrong"}).status_code == 401
-    assert client.post("/api/auth/signin", json={"email": "Asha@Example.com", "password": "correct horse 1"}).status_code == 200
-    assert client.get("/api/profile").json()["id"] == profile["id"]
+    again = client.post("/api/auth/firebase", json={"id_token": "uid-1|asha@example.com|Asha Rao"}).json()
+    assert again["created"] is False and again["profile"]["id"] == body["profile"]["id"]
+    # the same verified email under another sign-in method lands on the same profile
+    client.post("/api/auth/signout")
+    linked = client.post("/api/auth/firebase", json={"id_token": "uid-2|ASHA@example.com|"}).json()
+    assert linked["profile"]["id"] == body["profile"]["id"]
+    assert db_rows("select count(*) from profiles")[0][0] == 1
 
 
-def test_google_sign_in_creates_then_reuses_and_links(client, monkeypatch):
+def test_a_bad_token_is_rejected(client, monkeypatch):
     from tailortex.api import account
+    from tailortex.db.firebase import FirebaseAuthError
 
-    async def fake_verify(credential):
-        return {"sub": credential, "email": "asha@example.com", "email_verified": True, "name": "Asha Rao", "picture": "https://x/p.png"}
+    async def reject(_token):
+        raise FirebaseAuthError("Sign-in failed (expired).")
 
-    monkeypatch.setattr(account, "verify", fake_verify)
-    email_profile = signup(client)
-    client.post("/api/auth/signout")
-    r = client.post("/api/auth/google", json={"credential": "google-sub-1"}).json()
-    assert r["profile"]["id"] == email_profile["id"] and r["created"] is False  # linked to the email account
-    assert r["profile"]["account"]["google"] is True and r["profile"]["details"]["full_name"] == "Asha Rao"
-    client.post("/api/auth/signout")
-    again = client.post("/api/auth/google", json={"credential": "google-sub-1"}).json()
-    assert again["profile"]["id"] == email_profile["id"]
+    monkeypatch.setattr(account, "verify", reject)
+    r = client.post("/api/auth/firebase", json={"id_token": "whatever"})
+    assert r.status_code == 401 and "Sign-in failed" in r.json()["detail"]
+    assert client.get("/api/auth/me").json()["signed_in"] is False
 
 
-def _google_token(key, **claims):
-    base = {"iss": "https://accounts.google.com", "aud": "client-123", "sub": "42", "email": "a@b.co", "email_verified": True,
-            "exp": int(time.time()) + 600, "iat": int(time.time())}
+def test_auth_config_exposes_only_public_firebase_values(client, monkeypatch):
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "tailortex-demo")
+    monkeypatch.setenv("FIREBASE_API_KEY", "AIzaSyPUBLIC")
+    monkeypatch.setenv("FIREBASE_APP_ID", "1:123:web:abc")
+    cfg = client.get("/api/auth/config").json()
+    assert cfg["accounts"] is True
+    assert cfg["firebase"] == {"apiKey": "AIzaSyPUBLIC", "authDomain": "tailortex-demo.firebaseapp.com", "projectId": "tailortex-demo", "appId": "1:123:web:abc"}
+    monkeypatch.setenv("FIREBASE_API_KEY", "")
+    assert client.get("/api/auth/config").json()["firebase"] is None
+
+
+def _firebase_token(key, project="tailortex-demo", **claims):
+    now = int(time.time())
+    base = {"iss": f"https://securetoken.google.com/{project}", "aud": project, "sub": "uid-42", "email": "a@b.co", "email_verified": True,
+            "iat": now, "exp": now + 600, "firebase": {"sign_in_provider": "google.com"}}
     return jwt.encode({**base, **claims}, key, algorithm="RS256", headers={"kid": "k1"})
 
 
-def test_google_token_verification(monkeypatch):
-    from tailortex.db import google
+def test_firebase_token_verification(monkeypatch):
+    from tailortex.db import firebase
 
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     class Keys:
-        def get_signing_key_from_jwt(self, _token):
+        def get_signing_key_from_jwt(self, token):
             return type("K", (), {"key": private.public_key()})()
 
-    monkeypatch.setattr(google, "_keys", lambda: Keys())
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    assert google.verify_sync(_google_token(private))["sub"] == "42"
+    monkeypatch.setattr(firebase, "_keys", lambda: Keys())
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "tailortex-demo")
+    claims = firebase.verify_sync(_firebase_token(private))
+    assert claims["sub"] == "uid-42" and claims["email"] == "a@b.co"
+    now = int(time.time())
     for bad in (
-        _google_token(private, aud="someone-else"),
-        _google_token(private, exp=int(time.time()) - 10),
-        _google_token(private, iss="https://evil.example"),
-        _google_token(private, email_verified=False),
-        _google_token(rsa.generate_private_key(public_exponent=65537, key_size=2048)),
+        _firebase_token(private, project="another-project"),          # issued for a different Firebase project
+        _firebase_token(private, aud="another-project"),
+        _firebase_token(private, exp=now - 10),                       # expired
+        _firebase_token(private, iss="https://evil.example/tailortex-demo"),
+        _firebase_token(private, email_verified=False),
+        _firebase_token(private, email=""),
+        _firebase_token(private, sub="x" * 200),
+        _firebase_token(rsa.generate_private_key(public_exponent=65537, key_size=2048)),  # signed by someone else
+        "not-a-token",
     ):
-        with pytest.raises(google.GoogleAuthError):
-            google.verify_sync(bad)
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
-    with pytest.raises(google.GoogleAuthError, match="isn't set up"):
-        google.verify_sync(_google_token(private))
+        with pytest.raises(firebase.FirebaseAuthError):
+            firebase.verify_sync(bad)
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "")
+    with pytest.raises(firebase.FirebaseAuthError, match="isn't set up"):
+        firebase.verify_sync(_firebase_token(private))
 
 
 # --- profile ----------------------------------------------------------------------------------------
