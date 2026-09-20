@@ -122,6 +122,8 @@ export function RunPage() {
   const present = (list: Keyword[]) => list.filter((k) => k.after !== 'missing').length
   const after = view.after
   const passing = after.checks.filter((c) => c.ok).length
+  const compileWarning = view.warnings.find((w) => w.includes("doesn't compile")) ?? null
+  const otherWarnings = view.warnings.filter((w) => w !== compileWarning)
 
   return (
     <div className="flex flex-col gap-space-lg pb-24">
@@ -151,18 +153,21 @@ export function RunPage() {
         </div>
       </Card>
 
-      {(view.warnings.length > 0 || run.fit_note) && (
+      <Summary run={run} view={view} recs={recs} onTab={setTab} compileWarning={compileWarning} />
+
+      {/* Whatever the summary already explained isn't repeated here. */}
+      {(otherWarnings.length > 0 || run.fit_note) && (
         <div className="flex flex-col gap-2">
           {run.fit_note && <Notice tone="accent">{run.fit_note}</Notice>}
-          {view.warnings.map((w, i) => <Notice key={i} tone="warn">{w}</Notice>)}
+          {otherWarnings.map((w, i) => <Notice key={i} tone="warn">{w}</Notice>)}
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Score label="Must-have ATS" info="Share of the job's essential keywords found in your resume. In bullets counts fully; only in the Skills list counts 60%." before={run.before.must_have} after={after.must_have} left={`${present(must)}/${must.length} present`} />
         <Score label="Nice-to-have ATS" info="The same, for the job's preferred extras." before={run.before.nice_to_have} after={after.nice_to_have} left={`${present(nice)}/${nice.length} present`} accent />
-        <Score label="Title alignment" info="How closely your job titles match the target title, ignoring words like Senior." before={run.before.title} after={after.title} left={after.title >= 1 ? 'Exact match' : after.title >= 0.5 ? 'Close' : 'Different titles'} />
-        <Score label="ATS parse health" info="Checks on the PDF's extracted text: readable text, no broken ligatures, contact details found, standard headings, single-column order." before={run.before.health} after={after.health} left={after.checks.length ? `${passing} of ${after.checks.length} checks pass` : 'not compiled'} grade />
+        <Score label="Title alignment" info="How closely the job titles on your resume match the one in the posting, ignoring words like Senior. TailorTeX never rewrites a job title, so this only moves if you change it yourself." before={run.before.title} after={after.title} left={after.title >= 1 ? 'Exact match' : after.title >= 0.5 ? 'Close' : 'No title matches'} />
+        <Score label="ATS parse health" info="Checks on the PDF's extracted text: readable text, no broken ligatures, contact details found, standard headings, single-column order. Needs a PDF, so it's empty when your resume doesn't compile." before={run.before.health} after={after.health} left={after.checks.length ? `${passing} of ${after.checks.length} checks pass` : 'needs a PDF'} grade />
         <PagesTile after={after} limit={run.page_limit} />
       </div>
 
@@ -194,19 +199,74 @@ export function RunPage() {
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-outline-variant/50 bg-surface-container-lowest/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3 px-gutter-mobile py-3 md:px-gutter">
-          <div className="flex items-center gap-3 font-code-sm text-code-sm text-on-surface-variant">
-            <span className={`h-2 w-2 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-            <span>{kept} of {run.changes.length} changes kept</span>
-            {view.after.pages !== null && <span className="hidden sm:inline">· {view.after.pages} page{view.after.pages === 1 ? '' : 's'}</span>}
+          <div className="flex items-center gap-2.5 font-body-sm text-body-sm text-on-surface-variant">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${dirty ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+            <span>
+              {dirty
+                ? `${kept} of ${run.changes.length} changes in your resume — rebuild to apply`
+                : `All ${run.changes.length} changes are in your resume. Remove any you don't want.`}
+            </span>
+            {!dirty && view.after.pages !== null && <span className="hidden sm:inline">· {view.after.pages} page{view.after.pages === 1 ? '' : 's'}</span>}
           </div>
           <div className="flex items-center gap-2">
-            {dirty && <Button size="sm" variant="ghost" onClick={() => setDecisions({})}>Reset all</Button>}
-            <Button size="sm" disabled={!dirty} loading={rebuilding} onClick={rebuild}><Icon name="build" className="text-[17px]" /> Rebuild with my choices</Button>
+            {dirty && <Button size="sm" variant="ghost" onClick={() => setDecisions({})}>Undo my changes</Button>}
+            {dirty
+              ? <Button size="sm" loading={rebuilding} onClick={rebuild}><Icon name="build" className="text-[17px]" /> Rebuild with my choices</Button>
+              : view.pdf
+                ? <Button size="sm" onClick={() => { downloadBlob(base64ToBlob(view.pdf!, 'application/pdf'), `${filename}.pdf`); sendFeedback() }}><Icon name="download" className="text-[17px]" /> Download PDF</Button>
+                : <Button size="sm" onClick={() => { openInOverleaf(view.tex, `${filename}.tex`, run.engine); sendFeedback() }}>Open in Overleaf <Icon name="arrow_outward" className="text-[14px]" /></Button>}
           </div>
         </div>
       </div>
       {toast && <div role="status" className="fixed bottom-20 left-1/2 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg bg-inverse-surface px-4 py-2.5 font-body-sm text-body-sm text-inverse-on-surface shadow-xl">{toast}</div>}
     </div>
+  )
+}
+
+/** The whole run in plain words: what it did to the resume, whether that helped, and the one thing to do next. */
+function Summary({ run, view, recs, onTab, compileWarning }: { run: SavedRun; view: { after: SavedRun['after']; pdf: string | null }; recs: Recommendation[]; onTab: (t: Tab) => void; compileWarning: string | null }) {
+  const n = (op: Change['op']) => run.changes.filter((c) => c.op === op).length
+  const did: string[] = []
+  const add = (count: number, one: string, many: string) => count && did.push(`${count} ${count === 1 ? one : many}`)
+  add(n('rewrite'), 'bullet rewritten', 'bullets rewritten')
+  add(n('add'), 'bullet added', 'bullets added')
+  add(n('drop') + n('drop_entry'), 'bullet removed', 'bullets removed')
+  add(n('reorder') + n('reorder_entries'), 'list reordered', 'lists reordered')
+  const sentence = did.length ? did.join(', ').replace(/, ([^,]*)$/, ' and $1') : 'No edits were applied'
+
+  const before = run.before.must_have
+  const after = view.after.must_have
+  const delta = Math.round((after - before) * 100)
+  const compiled = view.after.pages !== null
+  const high = recs.filter((r) => r.priority === 'high').length
+
+  const next = !compiled
+    ? { text: `${compileWarning ?? "Your resume didn't compile, so there's no PDF."} Fix it in your LaTeX editor and tailor again; the tailored .tex below has the same problem.`, tab: null, label: null }
+    : high
+      ? { text: `${high} high-priority ${high === 1 ? 'item' : 'items'} could raise your match further.`, tab: 'recommendations' as Tab, label: 'See recommendations' }
+      : { text: 'Read each change below, remove any you would not say in an interview, then download the PDF.', tab: null, label: null }
+
+  return (
+    <Card className="flex flex-col gap-3 p-5">
+      <div className="flex items-center gap-2">
+        <Icon name="summarize" className="text-[20px] text-primary" />
+        <h2 className="font-headline-sm text-headline-sm text-on-surface">What TailorTeX did</h2>
+      </div>
+      <p className="font-body-lg text-body-lg leading-relaxed text-on-surface">
+        {sentence} in your resume, each one checked against your resume and your context.{' '}
+        {delta > 0
+          ? <>That took the job's must-have keywords from <strong>{pct(before)}</strong> to <strong>{pct(after)}</strong> of the list.</>
+          : delta < 0
+            ? <>Must-have keyword coverage moved from {pct(before)} to {pct(after)}.</>
+            : <>Must-have keyword coverage stayed at <strong>{pct(after)}</strong>.</>}
+        {run.blocked.length > 0 && <> {run.blocked.length} further {run.blocked.length === 1 ? 'edit was' : 'edits were'} refused because nothing you have backs {run.blocked.length === 1 ? 'it' : 'them'}.</>}
+      </p>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-container-low px-3.5 py-2.5">
+        <Icon name={compiled ? 'arrow_forward' : 'warning'} className={`text-[18px] ${compiled ? 'text-primary' : 'text-amber-600'}`} />
+        <span className="font-body-md text-body-md text-on-surface">{next.text}</span>
+        {next.tab && <button type="button" onClick={() => onTab(next.tab as Tab)} className="font-label-md text-label-md font-semibold text-primary hover:underline">{next.label}</button>}
+      </div>
+    </Card>
   )
 }
 
@@ -255,7 +315,7 @@ function PagesTile({ after, limit }: { after: SavedRun['after']; limit: number }
       <div>
         <div className="flex items-center justify-between">
           <span className="font-code-sm text-code-sm font-semibold uppercase tracking-wider text-on-surface-variant">Pages</span>
-          <InfoTip align="right">Length of the compiled resume and how full the last page is.</InfoTip>
+          <InfoTip align="right">Length of the compiled resume and how full the last page is. Empty when your resume doesn't compile.</InfoTip>
         </div>
         <div className="mt-2 flex items-baseline gap-2">
           <span className="font-mono text-[26px] font-bold leading-none tracking-tight text-on-surface">{pages ?? '–'}</span>
@@ -265,7 +325,7 @@ function PagesTile({ after, limit }: { after: SavedRun['after']; limit: number }
       <div className="mt-4">
         <div className="h-2 w-full overflow-hidden rounded-full bg-surface-variant"><div className={`h-full ${over ? 'bg-error' : 'bg-primary'}`} style={{ width: `${(fill ?? 0) * 100}%` }} /></div>
         <div className="mt-2 flex items-center justify-between font-code-sm text-[11px] text-on-surface-variant">
-          <span>{fill !== null ? `${pct(fill)} filled` : 'not compiled'}</span>
+          <span>{fill !== null ? `${pct(fill)} filled` : 'needs a PDF'}</span>
           <span className={`font-medium ${over ? 'text-error' : 'text-emerald-700'}`}>{pages === null ? '' : over ? 'Over the limit' : 'Within the limit'}</span>
         </div>
       </div>
@@ -314,9 +374,11 @@ function ChangeCard({ change, decision, onDecide, labels }: { change: Change; de
           <span className="truncate font-code-sm text-code-sm font-medium text-on-surface-variant">{where}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Pill on={decision.action === 'kept'} tone="good" icon="check" label="Keep" onClick={() => onDecide({ action: 'kept' })} />
-          <Pill on={reverted} tone="bad" icon="undo" label="Revert" onClick={() => onDecide({ action: 'reverted' })} />
-          {editable && <Pill on={decision.action === 'edited'} tone="accent" icon="edit" label="Edit" onClick={() => { setDraft(plain(current)); setEditing(true) }} />}
+          <span className={`flex items-center gap-1 rounded border px-2 py-0.5 font-code-sm text-[11px] font-semibold uppercase tracking-wider ${reverted ? 'border-outline-variant bg-surface-container text-on-surface-variant' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+            <Icon name={reverted ? 'block' : 'check'} className="text-[13px]" /> {reverted ? 'Not used' : 'In your resume'}
+          </span>
+          <Pill tone={reverted ? 'good' : 'bad'} icon={reverted ? 'undo' : 'close'} label={reverted ? 'Put it back' : 'Remove'} onClick={() => onDecide(reverted ? { action: 'kept' } : { action: 'reverted' })} />
+          {editable && !reverted && <Pill tone="accent" icon="edit" label={decision.action === 'edited' ? 'Edit again' : 'Edit'} onClick={() => { setDraft(plain(current)); setEditing(true) }} />}
         </div>
       </div>
       {editing ? (
@@ -360,10 +422,11 @@ function ChangeCard({ change, decision, onDecide, labels }: { change: Change; de
   )
 }
 
-function Pill({ on, tone, icon, label, onClick }: { on: boolean; tone: 'good' | 'bad' | 'accent'; icon: string; label: string; onClick: () => void }) {
-  const onCls = { good: 'border-emerald-200 bg-emerald-50 text-emerald-700', bad: 'border-red-200 bg-error-container text-on-error-container', accent: 'border-primary-fixed bg-primary-fixed/40 text-primary' }[tone]
+/** An action, not a state: pressing it always changes something. */
+function Pill({ tone, icon, label, onClick }: { tone: 'good' | 'bad' | 'accent'; icon: string; label: string; onClick: () => void }) {
+  const hover = { good: 'hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700', bad: 'hover:border-red-200 hover:bg-error-container hover:text-on-error-container', accent: 'hover:border-primary-fixed hover:bg-primary-fixed/40 hover:text-primary' }[tone]
   return (
-    <button type="button" aria-pressed={on} onClick={onClick} className={`flex items-center gap-1 rounded border px-2.5 py-1 font-label-md text-[12px] transition-all ${on ? onCls : 'border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container-low'}`}>
+    <button type="button" onClick={onClick} className={`flex items-center gap-1 rounded border border-outline-variant bg-surface-container-lowest px-2.5 py-1 font-label-md text-[12px] text-on-surface-variant transition-all ${hover}`}>
       <Icon name={icon} className="text-[14px]" /> {label}
     </button>
   )
@@ -463,7 +526,7 @@ function Guardrails({ run, skills, onConfirm }: { run: SavedRun; skills: string[
               <li key={i} className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded border border-red-200 bg-error-container px-2 py-0.5 font-code-sm text-[11px] font-semibold text-on-error-container">{RULE[b.rule] ?? b.rule}</span>
-                  <span className="font-code-sm text-[11px] text-on-surface-variant">{b.op} · attempt {b.attempt}{b.retried ? ' · sent back to the model' : ''}</span>
+                  {b.retried && <span className="font-body-sm text-body-sm text-on-surface-variant">The model was asked to try again without it.</span>}
                 </div>
                 <div className="font-body-md text-body-md text-on-surface">{b.message}</div>
                 {b.text && <blockquote className="rounded-r-lg border-l-4 border-error bg-surface-container-low px-3 py-1.5 font-body-sm text-body-sm text-on-surface-variant">{plain(b.text)}</blockquote>}

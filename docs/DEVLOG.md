@@ -222,6 +222,22 @@ quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier    retryDelay: 38s
 
 **Checked against the real thing:** asking for a model whose 20 requests were gone switched to the next one and finished. The tests use Gemini's exact reply, list wrapper and all.
 
+## 18. The result page: saying what happened
+
+**Found by the user,** looking at a finished run: "it's too cluttered, I don't know what's happening, and it isn't even doing anything when I click Keep."
+
+**The dead button.** Every change starts kept, so the Keep pill was already lit. Pressing it set the state it was already in: the counter didn't move, nothing was marked, and "Rebuild with my choices" stayed greyed out. Three pills sat side by side where one was always a no-op. Now there's a **state** ("In your resume" / "Not used") next to a single **action** ("Remove" / "Put it back"), plus Edit. Every button press changes something. The rebuild indexing was checked while I was in there and is right: a change's `id` is its index in `ops`, so removing the third change drops the third op.
+
+**The dead-end bar.** The bottom bar showed "7 of 7 changes kept" beside a disabled button, with nothing saying why it was disabled. It now says what state you're in — "All 7 changes are in your resume. Remove any you don't want." — and offers the action that does make sense: Download PDF, or Open in Overleaf when there's no PDF. The rebuild button only appears once there's something to rebuild.
+
+**Nothing said what had happened.** The page opened with five tiles of percentages. There's now a plain paragraph at the top: "6 bullets rewritten and 1 bullet added in your resume, each one checked against your resume and your context. That took the job's must-have keywords from 37% to 58% of the list. 2 further edits were refused because nothing you have backs them." Under it, one line saying what to do next, which changes with the state of the run: fix the resume if it doesn't compile, look at the high-priority ATS items if there are any, otherwise review and download.
+
+**Empty tiles explain themselves.** Parse health and Pages are blank whenever the resume doesn't compile; they said "not compiled", which reads like a bug. They now say "needs a PDF", and the tooltips say why. Title alignment showing 0% now says "No title matches" and its tooltip says TailorTeX never rewrites a job title, so only you can move that number.
+
+**Less jargon.** Blocked edits showed "rewrite s1.k3 · attempt 1 · sent back to the model". The internal ids are gone; what's left is the rule, the sentence explaining it, and the text that was refused.
+
+**The duplicate warning is gone.** The compile failure was printed twice, once in the summary and once as its own banner.
+
 ## Test status
 
 124 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
