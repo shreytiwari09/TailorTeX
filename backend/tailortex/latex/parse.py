@@ -607,11 +607,57 @@ def _find_skills_lines(s: str, region: Span, sec: Section) -> list[Block]:
             if not m:
                 continue
             vstart = i + m.end()
+        # In a table the label sits in its own column: the values start after the column break, which must survive.
+        amp = re.match(r"\s*&", s[vstart:b])
+        if amp:
+            vstart += amp.end()
         vend = _values_end(s, vstart, b)
         va, vb = _trim(s, vstart, vend)
         if va < vb:
             lines.append(_skills_block(s, sec, (cmd.start, vb), (va, vb), label.rstrip(":").strip()))
+    if lines:
+        return _number(lines, sec)
+
+    # \item[Label] values, the description-list style
+    for m in re.finditer(r"\\item\s*\[", s[a:b]):
+        start = a + m.start()
+        open_bracket = a + m.end() - 1
+        close = match_bracket(s, open_bracket)
+        if close == -1:
+            continue
+        label = latex_to_plain(s[open_bracket + 1 : close]).replace("**", "").strip()
+        va, vb = _trim(s, close + 1, _values_end(s, close + 1, b))
+        if va < vb:
+            lines.append(_skills_block(s, sec, (start, vb), (va, vb), label.rstrip(":").strip()))
+    if lines:
+        return _number(lines, sec)
+
+    # Skills written with no label at all: one \item per line, or a plain paragraph of comma-separated skills.
+    for va, vb in _plain_skill_runs(s, a, b):
+        lines.append(_skills_block(s, sec, (va, vb), (va, vb), ""))
     return _number(lines, sec)
+
+
+# A run of skills needs separators to be one: a sentence under a Skills heading is prose, not a list.
+_SEPARATORS = re.compile(r"[,;\u2022\u00b7|]|\\textbullet\{\}|\\textperiodcentered\{\}")
+
+
+def _plain_skill_runs(s: str, a: int, b: int) -> list[Span]:
+    """Unlabelled skills: the pieces of the section that are plain text with separators in them.
+
+    Splitting on \item, a forced break and a blank line covers a bullet list, a line-broken block and a
+    paragraph in one rule, without knowing anything about how this particular resume is written.
+    """
+    runs: list[Span] = []
+    cuts = [a] + [a + m.end() for m in re.finditer(r"\\item(?![A-Za-z])|\\\\|\n[ \t]*\n", s[a:b])] + [b]
+    for i in range(len(cuts) - 1):
+        va, vb = _trim(s, cuts[i], _values_end(s, cuts[i], cuts[i + 1]))
+        chunk = s[va:vb]
+        if va >= vb or not _VALUES_SIMPLE.match(chunk):
+            continue
+        if _SEPARATORS.search(chunk) and len(latex_to_plain(chunk)) > 3:
+            runs.append((va, vb))
+    return runs
 
 
 def _values_end(s: str, i: int, limit: int) -> int:

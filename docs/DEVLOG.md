@@ -680,3 +680,25 @@ list. It is now stamped `source="user"` with no citation, so it applies on every
 writes still keep `source="model"` and every fabrication check, and there is a test that says so. The result
 page also lost accepted chat changes on reload, because it only restored ops citing an answer; it now restores
 anything accepted that wasn't one of the run's own suggestions.
+
+## 32. Skills sections in every style, and jobs in every trade
+
+**Adding a skill now edits the file on nine of thirteen corpus resumes, up from five.** Alongside the
+labelled-line styles it already knew, the parser reads a description list (`\item[Label] values`), a table
+row (the label is one column, so the `&` survives the edit), and skills written with no label at all —
+one `\item` per line, or a plain comma-separated paragraph. The unlabelled case is one rule: cut the section
+on `\item`, a forced break or a blank line, and keep the pieces that are plain text with separators in them.
+The four resumes left have no skills section at all; creating one needs an `add_section` op, which doesn't
+exist yet, so they still fall back to code to paste.
+
+**A tool has to be named; an area of practice can be described.** That rule was enforced against a list of
+thirty software fields, so a nurse who taught families about wound care could never be credited with patient
+education. The model now says, per term, whether it is a named tool, certification or product, or a field
+anyone in that job could describe doing — and the verbatim quote is still what makes it honest. A model that
+doesn't answer falls back to the old list, so nothing regresses.
+
+**`tests/corpus/jobs.py`** holds ten job analyses — backend, data science, nursing, marketing, finance,
+mechanical, teaching, sales, one that says almost nothing, and one that tries to give instructions. Every
+corpus resume is measured against every one of them: 130 combinations asserting no crash, scores inside
+0..1, gaps drawn only from the job's own terms, and gap worth that never promises more than coverage is
+worth. A job that says "ignore all previous instructions" becomes terms to look for, like any other words.

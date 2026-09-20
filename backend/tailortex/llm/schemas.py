@@ -87,6 +87,7 @@ class SupportItem(BaseModel):
     passage: str = Field(default="", description="The id of the passage that shows it")
     quote: str = Field(default="", description="The exact words from that passage that show it, copied verbatim")
     how: Literal["named", "described"] = Field(default="described", description="named: the passage names it. described: it shows the work in other words")
+    kind: Literal["tool", "field"] | None = Field(default=None, description="tool: a named product, brand, system, certification or qualification. field: an area of practice or a skill anyone in the job could describe doing")
 
 
 class SupportReply(BaseModel):

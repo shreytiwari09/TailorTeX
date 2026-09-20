@@ -139,3 +139,25 @@ def test_the_pipeline_uses_what_was_found_and_shows_it(monkeypatch):
     plan_prompt = next(u for _s, u in llm.prompts if "<job>" in u and "<evidence>" in u)
     assert "Testing [EVIDENCE: inf1]" in plan_prompt and "only usable in bullets of that entry" in plan_prompt
     assert "Testing" not in [g["term"] for g in r["gains"]["gaps"]]  # so the person isn't asked to prove it
+
+
+def test_a_field_outside_software_can_be_shown_by_describing_the_work():
+    """No list of concepts could cover every trade, so the model says whether a term is a named tool or an
+    area of practice, and a term it calls a field may be shown in the person's own different words."""
+    nurse = EvidenceItem(id="n1", source="fact", title="Ward work",
+                         text="Taught families how to care for surgical wounds at home before discharge.")
+    found, _ = ask(["Patient Education"], [dict(said("Patient Education", "n1", "Taught families how to care for surgical wounds at home"), kind="field")], [nurse])
+    assert [(f.term, f.how) for f in found] == [("Patient Education", "described")]
+
+
+def test_a_named_thing_outside_software_still_has_to_be_named():
+    """A different records system is not Epic, exactly as a different library is not PyTorch."""
+    nurse = EvidenceItem(id="n1", source="fact", title="Ward work",
+                         text="Charted every handover in the ward's electronic records system.")
+    found, _ = ask(["Epic"], [dict(said("Epic", "n1", "Charted every handover in the ward's electronic records system"), kind="tool")], [nurse])
+    assert found == []
+
+
+def test_a_model_that_says_nothing_about_the_kind_falls_back_to_the_old_rule():
+    found, _ = ask(["Testing"], [said("Testing", "resume:s1.e0.b2", "Wrote integration tests with pytest")])
+    assert [f.term for f in found] == ["Testing"]

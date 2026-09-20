@@ -37,8 +37,9 @@ log = logging.getLogger("tailortex")
 TOP_K = 4  # passages shown to the model per skill
 MIN_QUOTE = 12  # a quote shorter than this can't show much
 
-# Fields and concepts that a description of the work can show. Everything else (tools, libraries, languages,
-# products) has to be named.
+# A short list of fields, kept only so `is_concept` can answer without a model for callers that need it.
+# The rule that matters is decided per term by the model, which says whether a term is a named tool or an
+# area of practice — no list here could cover nursing, marketing, finance and teaching as well as software.
 CONCEPTS = (
     "machine learning", "deep learning", "generative ai", "artificial intelligence", "computer vision",
     "natural language processing", "nlp", "data science", "statistics", "algorithms", "data structures",
@@ -145,7 +146,9 @@ async def find_support(
             continue
         if not quote_is_real(item.quote, p.text):
             continue  # paraphrased or invented: not accepted
-        if item.how == "named" or not is_concept(term):
+        # A model that says what kind of thing the term is decides it; one that doesn't falls back to the list.
+        must_be_named = item.kind == "tool" if item.kind else not is_concept(term)
+        if item.how == "named" or must_be_named:
             if not contains_term(item.quote, term):
                 continue  # a tool has to be named, and it wasn't
         found[term] = Support(term, p.id, p.origin, item.quote.strip(), item.how, p.source, p.scope, p.url)
