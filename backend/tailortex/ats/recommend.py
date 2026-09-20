@@ -6,6 +6,7 @@ Each item has an action the app can offer:
 - fix_source: change something in the LaTeX (formatting, headings, contact line)
 - confirm_skill: ask "do you have this?" (adds it to confirmed skills)
 - use_context: run again, letting the model use the context entries that back it
+- improve_writing: how the bullets are written, which helps on any job, not just this one
 - none: advice only
 """
 
@@ -77,6 +78,20 @@ def recommendations(result: dict, evidence_titles: dict[str, str] | None = None)
             terms = ", ".join(s["still_missing"][:4])
             out.append(_rec("medium" if s.get("must") else "low", "Context", f"Use “{s.get('title') or s.get('id')}”",
                             f"It covers {terms}, which this version doesn't show.", "use_context", None, [s["id"]]))
+
+    # Writing quality: true of the resume whatever job it's aimed at.
+    findings = after.get("quality_findings") or []
+    for check in after.get("quality_checks") or []:
+        score = check.get("score")
+        if check.get("ok") or score is None:
+            continue
+        examples = [f["text"] for f in findings if f.get("check") == check.get("id")][:3]
+        hint = next((f["hint"] for f in findings if f.get("check") == check.get("id")), "")
+        detail = check.get("detail", "")
+        if hint:
+            detail = f"{detail} {hint}"
+        out.append(_rec("high" if score < 0.4 else "medium", "Writing", check.get("label", "Writing"),
+                        detail.strip(), "improve_writing", check.get("id"), examples))
 
     out.sort(key=lambda r: PRIORITY[r["priority"]])
     return out

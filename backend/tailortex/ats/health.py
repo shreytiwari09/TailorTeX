@@ -27,6 +27,7 @@ class Check:
     ok: bool
     detail: str
     weight: float = 1.0
+    score: float | None = None  # graded checks score 0..1 ("7 of 9 bullets"); None means pass or fail
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -86,8 +87,10 @@ def parse_health(text: str, doc: ParsedResume) -> list[Check]:
 
 
 def health_score(checks: list[Check]) -> float:
+    """Weighted share of checks passed. A graded check contributes its score, not just pass or fail."""
     total = sum(c.weight for c in checks)
-    return sum(c.weight for c in checks if c.ok) / total if total else 1.0
+    got = sum(c.weight * (c.score if c.score is not None else float(c.ok)) for c in checks)
+    return got / total if total else 1.0
 
 
 # --- source lint --------------------------------------------------------------

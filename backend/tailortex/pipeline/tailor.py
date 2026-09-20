@@ -21,6 +21,7 @@ from typing import Awaitable, Callable
 
 from ..ats.coverage import Gap, coverage_loss, coverage_scores, gap_analysis, term_coverage, title_alignment
 from ..ats.health import health_score, lint_source, parse_health
+from ..ats.quality import quality_report
 from ..ats.recommend import recommendations
 from ..ats.terms import contains_term, count_term, same_term
 from ..compile.compile import CompileResult, UnsafeLatexError, compile_async, detect_engine, tex_available
@@ -68,6 +69,9 @@ class Metrics:
     checks: list[dict]
     pages: int | None
     page_fill: float | None
+    quality: float = 1.0  # general resume quality, independent of this job
+    quality_checks: list[dict] = field(default_factory=list)
+    quality_findings: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -122,6 +126,7 @@ def measure(doc: ParsedResume, analysis: JobAnalysis, compiled: CompileResult | 
     cov = term_coverage(doc, analysis, text)
     must, nice = coverage_scores(cov)
     checks = parse_health(text, doc) if text is not None else []
+    quality, qchecks, qfindings = quality_report(doc)
     return (
         Metrics(
             must_have=round(must, 4),
@@ -131,6 +136,9 @@ def measure(doc: ParsedResume, analysis: JobAnalysis, compiled: CompileResult | 
             checks=[c.to_dict() for c in checks],
             pages=compiled.pages if compiled and compiled.ok else None,
             page_fill=compiled.page_fill if compiled and compiled.ok else None,
+            quality=quality,
+            quality_checks=[c.to_dict() for c in qchecks],
+            quality_findings=[f.to_dict() for f in qfindings],
         ),
         cov,
     )
@@ -282,6 +290,7 @@ async def _run_candidate(
         title=metrics.title,
         parse_health=metrics.health if metrics.health is not None else 1.0,
         page_fill=metrics.page_fill,
+        bullet_quality=metrics.quality,
         stuffing=stuffing,
     ))
     await emit(_event("score", "done", f"[{arm}] Score {r.total:.2f}: must-have coverage {metrics.must_have:.0%}", {"arm": arm, "reward": r.total}))

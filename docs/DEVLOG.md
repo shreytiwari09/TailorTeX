@@ -305,6 +305,45 @@ About 230 extra tokens on a prefix-stable prompt, and no extra model calls.
 The honesty section is the part worth keeping: every other rule is presentation, and none of them is a licence
 to add something the person didn't do. A score near 100% on a job you don't match is a failure, not a win.
 
+## 22. Measuring how well the resume is written, not just how well it matches
+
+Everything the tool scored was about *this* job: keyword coverage, title alignment, parse health. So a
+resume could gain keywords and still be full of "Responsible for maintaining the payments API". The user
+asked for the general improvements too — "things which generally increase ATS regardless of the JD".
+
+`ats/quality.py` measures ten of them on the parsed LaTeX alone. **No PDF needed**, unlike every
+`parse_health` check, so a resume that doesn't compile still gets useful feedback: bullets opening with a
+verb doing work, quantified results, saying how or what changed, length, third person, tense agreement,
+dated entries, contact details, single-column layout, and varied opening verbs.
+
+`reward.WEIGHTS` already reserved 0.10 for `bullet_quality` and nothing ever filled it, so it had been a
+constant 0.5 for every candidate and cancelled out. It now carries this score, which is what makes the
+general rules actually bite: with keyword coverage tied, the better-written candidate wins.
+
+**Tuning it against the sample resume caught four checks that were wrong, not the resume:**
+- An enumerated verb list will always have holes ("Containerized", "Backfilled"), so any past-tense verb
+  counts and only the genuinely weak openers are rejected.
+- A result is phrased many ways: ", ending the missed run", "that removed race conditions", "which cut
+  latency". Matching only "resulting in" flagged good bullets.
+- `structure` required a strong opener too, charging one sentence twice for a fault `action_verb` already
+  counted.
+- Date formats only have to agree *within* a section: a project dated "2024" beside a job dated
+  "Aug. 2021 - May 2025" is ordinary resume style.
+
+**Two things worth knowing:**
+- `validate.metrics()` is deliberately greedy because it decides what a bullet may not invent. Measuring
+  quantification needs the opposite bias, so `result_metrics()` drops version numbers: "Python 3" and
+  "Django 4.2" say nothing about impact, while "40%", "900ms" and "1,200 merchants" do.
+- The length ceiling can't be `doc.bullet_budget`, which is 1.15x the longest bullet already present — a
+  long bullet would raise its own ceiling and never read as long. It is a fixed 60-240 characters.
+
+Failing checks become recommendations in a new **Writing** group, quoting up to three of the offending
+bullets, and a check the resume passes is never mentioned. The shipped template scores 0.97, and a test
+fails if it ever drops below 0.9 — a canary for a new check being too harsh.
+
+**Note:** absolute reward values shift with this change, so a run saved before it isn't comparable. The
+bandit compares arms within a context, so its learning is unaffected.
+
 ## Test status
 
-132 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+149 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
