@@ -202,13 +202,14 @@ For each answer:
 - Attach it to the entry named in "target". With no target, choose the entry whose work it belongs to, and say why in "reason".
 - Cite the answer's id in "evidence".
 - If the answer is too thin for a bullet, such as a bare claim ("I know PyTorch") with no project, context or outcome, write NO operation for it. Add a followup instead: one short question that would make it usable, such as "What did you build with PyTorch, and what changed because of it?".
+- An answer marked new_project describes a separate project that is not on the resume. Do NOT write an operation for it. Add one item to "projects" instead: {{"answer":"ans1","bullets":["...","..."]}}, with two to four bullets in the same what / how / result shape. The project's name and technologies are given; use only those and what the answer says. If the answer is too thin for even two bullets, add a followup instead.
 
 {ats_rules}
 
 Operations use the same format as before, for adding a bullet to an entry:
 {{"op":"add","target":"s1.e0","after":"s1.e0.b1","text":"...","evidence":["ans1"],"reason":"..."}}
 
-Reply with {{"ops":[...],"followups":[{{"term":"...","question":"..."}}]}}."""
+Reply with {{"ops":[...],"projects":[{{"answer":"ans1","bullets":["..."]}}],"followups":[{{"term":"...","question":"..."}}]}}."""
 
 
 def draft_system(budget: int, min_chars: int = MIN_BULLET_CHARS) -> str:
@@ -223,6 +224,9 @@ def draft_user(doc: ParsedResume, overlay: dict[str, str | None], evidence: list
     parts = []
     for a, item in answers:
         target = f' target="{a.target}"' if a.target else ""
+        if a.project:
+            stack = ", ".join(a.project.tech)
+            target = f' new_project="{a.project.name}"' + (f' technologies="{stack}"' if stack else "")
         parts.append(f'<answer id="{item.id}" skill="{a.term}"{target}>\n{item.text}\n</answer>')
     return (
         "<resume>\n" + render_resume(doc, overlay) + "\n</resume>\n\n"

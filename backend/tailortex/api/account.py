@@ -529,11 +529,14 @@ async def answer_run(run_id: str, body: AnswersIn, request: Request, profile: Pr
     for a in body.answers:
         if len(a.text.strip()) < 12:
             raise HTTPException(400, f"Tell us a little more about {a.term}: what you did with it, or what came of it.")
+        if a.project and not a.project.name.strip():
+            raise HTTPException(400, f"Give the project you did {a.term} in a name.")
     llm = llm_for(profile)
     await core.ensure_model(llm)
     context = await repo.list_context(db, profile)
     analysis = JobAnalysis.model_validate(run.result.get("analysis") or {})
-    out = await answer_gaps(run.source_tex, analysis, _evidence(profile, context), body.answers, body.ops, llm)
+    out = await answer_gaps(run.source_tex, analysis, _evidence(profile, context), body.answers, body.ops, llm,
+                            current_tex=run.tex, page_limit=run.result.get("page_limit"))
     # keep what they told us: a permanent fact, findable by meaning in every future tailoring
     items = [EvidenceItem.model_validate(e) for e in out["evidence"]]
     saved = await repo.add_source(db, profile, "fact", items)

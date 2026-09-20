@@ -21,13 +21,14 @@ from typing import Awaitable, Callable
 
 from ..ats.coverage import Gap, coverage_loss, coverage_scores, gap_analysis, term_coverage, title_alignment
 from ..ats.gain import ats_score, gap_gains, per_change_gains, quality_gain
-from ..ats.health import health_score, lint_source, parse_health
+from ..ats.health import apply_lint_fix, find_stray_breaks, health_score, lint_source, parse_health
 from ..ats.quality import quality_report
 from ..ats.recommend import recommendations
 from ..ats.terms import contains_term, count_term, same_term
 from ..compile.compile import CompileResult, UnsafeLatexError, compile_async, detect_engine, tex_available
 from ..latex.apply import ApplyError, apply_ops
 from ..latex.parse import ParsedResume, parse_resume
+from ..latex.snippet import MAX_BULLETS, insert_project, project_block, project_style
 from ..learn.arms import ARMS
 from ..learn.bandit import Bandit, context_key
 from ..learn.style import StyleMemory
@@ -38,7 +39,7 @@ from ..ops import Op
 from ..reward.reward import RewardInput, reward
 from ..evidence.answers import answer_to_evidence, next_answer_number
 from ..types import Answer, EvidenceItem, JobAnalysis
-from ..validate.validate import ValidationContext, Violation, validate_ops
+from ..validate.validate import ValidationContext, Violation, check_standalone_bullet, validate_ops
 
 Emit = Callable[[dict], Awaitable[None]]
 # Picks the background items to use for a job: (items to use, a message for the progress log).
@@ -191,6 +192,23 @@ def _fit_candidates(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> 
 def _fit_candidate(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> Op | None:
     """The least relevant bullet that can be dropped without losing a must-have keyword."""
     return next(iter(_fit_candidates(doc, ops, analysis)), None)
+
+
+async def _repair_original(tex: str) -> tuple[str, CompileResult, str] | None:
+    """Try the safe, known fixes for a resume that won't compile. Returns (fixed source, its compile, a note)
+    only if the fixed file really does compile, so a repair can never make things worse."""
+    stray = find_stray_breaks(tex)
+    if stray:
+        fixed = apply_lint_fix(tex, "stray_linebreak")
+        if fixed != tex:
+            result = await compile_async(fixed)
+            if result.ok:
+                where = f"line {stray[0][0]}"
+                return fixed, result, (
+                    f"Your resume wouldn't compile because {where} starts with a line break that has nothing before it to end. "
+                    "We removed it in this version so you get a PDF. Remove it from your Overleaf file too."
+                )
+    return None
 
 
 def normalize_ops(doc: ParsedResume, ops: list[Op]) -> list[Op]:
@@ -426,6 +444,7 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         "suggestions": background_suggestions(doc, parse_resume(best.tex), analysis, evidence or [], best.ops),
         "fit_note": best.fit_note,
         "tex": best.tex,
+        "source_tex": doc.source,
         "pdf": base64.b64encode(compiled.pdf).decode() if compiled and compiled.ok and compiled.pdf else None,
         "page_limit": page_limit,
         "filename": suggested_filename(doc, analysis),
@@ -435,6 +454,13 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
     }
     before_d, after_d = before.to_dict(), best.metrics.to_dict()
     result["ats"] = {"before": ats_score(before_d), "after": ats_score(after_d)}
+    lost = result["ats"]["before"] - result["ats"]["after"]
+    if best.ops and lost > 0.001:
+        # The keyword guard can't see everything: a rewrite can read worse without losing a keyword. Say so,
+        # so the person knows to look, instead of showing a score that quietly went down.
+        weaker = [c["label"] for c in (best.metrics.quality_checks or []) if not c.get("ok")]
+        why = f" It mostly comes from how the reworded bullets read ({', '.join(weaker[:2]).lower()})." if weaker and best.metrics.quality < before.quality else ""
+        result["warnings"].append(f"This version scores {lost * 100:.1f}% lower than your original.{why} Untick the changes that don't help, or keep your original wording.")
     result["gains"] = {
         "gaps": gap_gains(analysis, result["gaps"], result["keywords"]),
         "quality": quality_gain(before.quality, best.metrics.quality),
@@ -468,6 +494,12 @@ async def tailor(
             before_compiled = await compile_async(inp.tex)
         except UnsafeLatexError as e:
             raise TailorError(str(e)) from None
+        repaired = await _repair_original(inp.tex) if not before_compiled.ok else None
+        if repaired is not None:
+            inp.tex, before_compiled, note = repaired
+            doc = parse_resume(inp.tex)  # ids are unchanged: only a line break was removed
+            warnings.append(note)
+            await emit(_event("compile_original", "warn", note))
         if not before_compiled.ok:
             err = before_compiled.errors[0] if before_compiled.errors else None
             msg = f"Your original resume doesn't compile ({err.message}{f', line {err.line}' if err and err.line else ''}), so PDF checks are off for this run." if err else "Your original resume doesn't compile."
@@ -582,50 +614,128 @@ async def answer_gaps(
     accepted: list[Op],
     llm: LLMClient,
     emit: Emit = _noop,
+    current_tex: str | None = None,
+    page_limit: int | None = None,
 ) -> dict:
     """Turn the person's own words into checked bullets. One model call covers every answer.
 
-    Nothing is applied or compiled here: the caller shows the drafted changes, the person accepts,
-    and the existing rebuild applies them together with the ones already accepted.
+    An answer about something they did *inside* a job or project they already have becomes an `add`
+    operation on that entry. An answer about a *separate* project can't: TailorTeX can't create an
+    entry, so it becomes a block of LaTeX in the resume's own style, with a copy of the resume that has
+    it added, for the person to paste into Overleaf.
 
-    The drafted operations keep source="model". That is deliberate and load-bearing: source="user"
-    skips every fabrication check, which is right for text a person typed and wrong for text a model
-    wrote from their answer. Here the answer is the evidence, so a tool or number that isn't in what the
-    person said is rejected like any other invention.
+    Nothing is applied to the saved resume here. The drafted operations keep source="model", which is
+    load-bearing: source="user" skips every fabrication check, which is right for text a person typed and
+    wrong for text a model wrote from their answer. The answer is the evidence, so a tool or number that
+    isn't in what they said is rejected like any other invention.
     """
     doc = parse_resume(source_tex)
-    stored = [answer_to_evidence(a.term, a.text, next_answer_number([e.id for e in evidence]) + i) for i, a in enumerate(answers)]
+    first = next_answer_number([e.id for e in evidence])
+    stored = [answer_to_evidence(a.term, a.text, first + i, a.project.name if a.project else None) for i, a in enumerate(answers)]
     all_evidence = [*evidence, *stored]
     overlay = _accepted_overlay(doc, accepted)
     accepted_targets = {o.target for o in accepted}
+    by_id = {item.id: (a, item) for a, item in zip(answers, stored)}
 
     system = draft_system(doc.bullet_budget)
     base = draft_user(doc, overlay, all_evidence, list(zip(answers, stored)), analysis)
     vctx = ValidationContext(doc=doc, evidence=all_evidence, analysis=analysis)
 
-    await emit(_event("draft", "start", f"Writing {len(answers)} bullet{'s' if len(answers) != 1 else ''} from what you told us"))
-    message, blocked, followups, ops = base, [], [], []
+    await emit(_event("draft", "start", f"Writing from {len(answers)} answer{'s' if len(answers) != 1 else ''}"))
+    message, blocked, followups = base, [], []
+    ops: list[Op] = []
+    projects: dict[str, list[str]] = {}
     for attempt in range(1, MAX_DRAFT_RETRIES + 2):
         draft = await llm.complete(system, message, Draft)
-        ops = normalize_ops(doc, [p.to_op() for p in draft.ops])
+        # a separate project has no entry to add to, so an operation that cites its answer is dropped
+        ops = normalize_ops(doc, [p.to_op() for p in draft.ops if not any(e in by_id and by_id[e][0].project for e in (p.evidence or []))])
         followups = [f.model_dump() for f in draft.followups]
         result = validate_ops(ops, vctx)
         blocked = [{"attempt": attempt, "op": v.op.describe(), "rule": v.rule, "message": v.message, "text": v.op.text, "retried": attempt <= MAX_DRAFT_RETRIES}
                    for v in result.violations]
-        if not result.violations or attempt > MAX_DRAFT_RETRIES:
+
+        # bullets for separate projects have no entry to borrow from: only the person's own words count
+        projects, rejected = {}, []
+        for pd in draft.projects:
+            pair = by_id.get(pd.answer)
+            if pair is None or pair[0].project is None:
+                continue
+            a, item = pair
+            source = "\n".join([item.text, a.project.name, ", ".join(a.project.tech), a.project.dates])
+            good = []
+            for b in pd.bullets[:8]:
+                problem = check_standalone_bullet(b, source, doc.bullet_budget)
+                if problem is None:
+                    good.append(b)
+                else:
+                    rejected.append(f"Project '{a.project.name}': {problem[1]}")
+                    blocked.append({"attempt": attempt, "op": f"project {a.project.name}", "rule": problem[0], "message": problem[1], "text": b, "retried": attempt <= MAX_DRAFT_RETRIES})
+            if good:
+                projects[pd.answer] = good
+
+        problems = [f"{v.op.describe()}: {v.message}" for v in result.violations] + rejected
+        if not problems or attempt > MAX_DRAFT_RETRIES:
             break
-        message = retry_user(base, [o.model_dump() for o in ops], [f"{v.op.describe()}: {v.message}" for v in result.violations])
+        message = retry_user(base, [o.model_dump() for o in ops], problems)
 
     valid = result.valid
     # a new bullet may not land on a block the person already changed: the newer suggestion replaces it
     superseded = [o.target for o in valid if o.target in accepted_targets and o.op != "add"]
     changes = describe_changes(doc, valid, analysis)
-    await emit(_event("draft", "done", f"{len(valid)} bullet{'s' if len(valid) != 1 else ''} ready to review"))
+
+    snippets = [await _project_snippet(doc, analysis, by_id[aid][0], by_id[aid][1], bullets, current_tex or source_tex, page_limit)
+                for aid, bullets in projects.items()]
+    asked = {f["term"] for f in followups}
+    for a, item in by_id.values():
+        if a.project and item.id not in projects and a.term not in asked:
+            followups.append({"term": a.term, "question": f"Tell us a bit more about {a.project.name}: what did you build, what did you use, and what came of it?"})
+
+    n = len(valid) + len(snippets)
+    await emit(_event("draft", "done", f"{n} thing{'s' if n != 1 else ''} ready to review"))
     return {
         "ops": [o.model_dump() for o in valid],
         "changes": changes,
+        "projects": snippets,
         "blocked": blocked,
         "followups": followups,
         "superseded": superseded,
         "evidence": [e.model_dump() for e in stored],
+    }
+
+
+async def _project_snippet(doc: ParsedResume, analysis: JobAnalysis, answer: Answer, item: EvidenceItem,
+                           bullets: list[str], current_tex: str, page_limit: int | None) -> dict:
+    """The LaTeX for a new project, the resume with it added, and what adding it is worth."""
+    info = answer.project
+    assert info is not None
+    current = parse_resume(current_tex)
+    block = project_block(current, info.name, info.dates, info.tech, bullets)
+    merged, where = insert_project(current, block)
+    compiled = await compile_async(merged) if tex_available() else None
+    ok = None if compiled is None else compiled.ok
+
+    # worth: measured the same way both sides (no PDF), so the difference is the project alone
+    before, cov_before = measure(current, analysis, None)
+    after, cov_after = measure(parse_resume(merged), analysis, None)
+    was = {c.term: c.status for c in cov_before}
+    gained = [c.term for c in cov_after if c.status == "context" and was.get(c.term) != "context"]
+    limit = page_limit or (compiled.pages if compiled and compiled.ok else 1)
+    return {
+        "answer": item.id,
+        "term": answer.term,
+        "name": info.name,
+        "dates": info.dates,
+        "tech": info.tech,
+        "style": project_style(current),
+        "bullets": bullets[:MAX_BULLETS],
+        "latex": block,
+        "where": where,
+        "tex_with_project": merged,
+        "compiles": ok,
+        "pages": compiled.pages if compiled and compiled.ok else None,
+        "page_limit": limit,
+        "over_limit": bool(compiled and compiled.ok and compiled.pages > limit),
+        "ats_before": ats_score(before.to_dict()),
+        "ats_after": ats_score(after.to_dict()),
+        "terms": gained,
     }

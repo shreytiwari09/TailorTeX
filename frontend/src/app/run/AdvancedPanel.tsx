@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import type { Change, Evidence, GapGain, Op } from '../../api'
 import { plain } from '../../util'
-import { acct, type AnswerResult } from '../client'
+import { acct, type AnswerIn, type AnswerResult, type ProjectSnippet } from '../client'
 import { gainLabel } from '../format'
-import { Badge, Button, Card, Icon, InfoTip, Notice, TextArea } from '../ui'
+import { Badge, Button, Card, Icon, InfoTip, Notice, TextArea, TextInput } from '../ui'
+import { ProjectSnippetCard } from './ProjectSnippetCard'
 
 export type Entry = { id: string; label: string }
 
@@ -17,7 +18,7 @@ export type Drafted = { op: Op; change: Change }
  * Whatever the person writes, a line or a paragraph, is kept as permanent context and used to draft
  * a bullet, which is checked against their own words: it can only name what they said.
  */
-export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, drafted, onAccept, onDiscard, onStored, hasModel }: {
+export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, drafted, onAccept, onDiscard, onStored, hasModel, engine, filename }: {
   runId: string
   gaps: GapGain[]
   entries: Entry[]
@@ -28,6 +29,8 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
   onDiscard: (d: Drafted) => void
   onStored: (e: Evidence[]) => void
   hasModel: boolean
+  engine: string
+  filename: string
 }) {
   const [open, setOpen] = useState<string | null>(null)
   const [text, setText] = useState<Record<string, string>>({})
@@ -36,21 +39,33 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
   const [error, setError] = useState<string | null>(null)
   const [followups, setFollowups] = useState<Record<string, string>>({})
   const [rejected, setRejected] = useState<{ term: string; message: string }[]>([])
+  // Was it inside a job or project already on the resume, or a separate project?
+  const [kind, setKind] = useState<Record<string, 'entry' | 'project'>>({})
+  const [name, setName] = useState<Record<string, string>>({})
+  const [dates, setDates] = useState<Record<string, string>>({})
+  const [tech, setTech] = useState<Record<string, string>>({})
+  const [snippets, setSnippets] = useState<ProjectSnippet[]>([])
 
   const total = gaps.reduce((n, g) => n + g.gain, 0)
-  const ready = gaps.filter((g) => (text[g.term] ?? '').trim().length >= 12)
+  const isProject = (term: string) => kind[term] === 'project'
+  const ready = gaps.filter((g) => (text[g.term] ?? '').trim().length >= 12 && (!isProject(g.term) || (name[g.term] ?? '').trim().length >= 2))
 
   const send = async () => {
     setBusy(true)
     setError(null)
     setRejected([])
     try {
-      const r = await acct.answerRun(
-        runId,
-        ready.map((g) => ({ term: g.term, text: text[g.term].trim(), target: target[g.term] || null })),
-        acceptedOps,
-      )
+      const answers: AnswerIn[] = ready.map((g) => ({
+        term: g.term,
+        text: text[g.term].trim(),
+        target: isProject(g.term) ? null : target[g.term] || null,
+        project: isProject(g.term)
+          ? { name: name[g.term].trim(), dates: (dates[g.term] ?? '').trim(), tech: (tech[g.term] ?? g.term).split(',').map((t) => t.trim()).filter(Boolean) }
+          : null,
+      }))
+      const r = await acct.answerRun(runId, answers, acceptedOps)
       onDrafted(r)
+      setSnippets((list) => [...list, ...r.projects])
       onStored(r.evidence)
       setFollowups(Object.fromEntries(r.followups.map((f) => [f.term, f.question])))
       setRejected(r.blocked.map((b) => ({ term: b.text ?? b.op, message: b.message })))
@@ -64,7 +79,7 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
     }
   }
 
-  if (!gaps.length && !drafted.length) return null
+  if (!gaps.length && !drafted.length && !snippets.length) return null
   return (
     <Card className="flex flex-col gap-space-md p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -92,6 +107,10 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
           One draft mentioned something you didn't say, so it was left out: {rejected[0].message} Add the detail to your answer and try again.
         </Notice>
       )}
+
+      {snippets.map((sn) => (
+        <ProjectSnippetCard key={sn.answer} snippet={sn} engine={engine} filename={filename} onDismiss={() => setSnippets((l) => l.filter((x) => x !== sn))} />
+      ))}
 
       {drafted.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -140,7 +159,28 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
                     aria-label={`What you have done with ${g.term}`}
                     placeholder={`Anything about ${g.term}: a project, a course, something you built at work. One line or a paragraph. What you did, what you used, what changed.`}
                   />
-                  {entries.length > 0 && (
+                  <div role="radiogroup" aria-label={`Where did you use ${g.term}?`} className="flex flex-wrap gap-2">
+                    {([['entry', 'In a job or project already on my resume'], ['project', "It was a separate project"]] as const).map(([k, label]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        role="radio"
+                        aria-checked={(kind[g.term] ?? 'entry') === k}
+                        onClick={() => setKind((x) => ({ ...x, [g.term]: k }))}
+                        className={`rounded-full border px-3 py-1 font-label-sm text-label-sm transition-colors ${(kind[g.term] ?? 'entry') === k ? 'border-primary-container bg-primary-fixed/40 text-primary' : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-low'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {isProject(g.term) && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <TextInput value={name[g.term] ?? ''} onChange={(e) => setName((x) => ({ ...x, [g.term]: e.target.value }))} placeholder="Project name" aria-label="Project name" />
+                      <TextInput value={dates[g.term] ?? ''} onChange={(e) => setDates((x) => ({ ...x, [g.term]: e.target.value }))} placeholder="When, e.g. Jan 2026 - Apr 2026" aria-label="Project dates" />
+                      <TextInput className="sm:col-span-2" value={tech[g.term] ?? g.term} onChange={(e) => setTech((x) => ({ ...x, [g.term]: e.target.value }))} placeholder="Technologies, separated by commas" aria-label="Technologies" />
+                    </div>
+                  )}
+                  {entries.length > 0 && !isProject(g.term) && (
                     <label className="flex flex-wrap items-center gap-2 font-body-sm text-body-sm text-on-surface-variant">
                       Where does this belong?
                       <select
@@ -171,7 +211,7 @@ export function AdvancedPanel({ runId, gaps, entries, acceptedOps, onDrafted, dr
             </span>
           </div>
           <p className="font-body-sm text-body-sm text-on-surface-variant">
-            This adds bullets to entries you already have. A brand-new project isn't created yet: it's saved to your context, and will become a full entry once it's on your resume.
+            For a job or project you already have, this adds a bullet to it. For a separate project, TailorTeX can't add a new entry itself, so you get code to paste into Projects in Overleaf.
           </p>
         </div>
       )}

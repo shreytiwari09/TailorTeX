@@ -128,6 +128,39 @@ def document_class(source: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+# A line break has to end a line of something. One that opens an environment or follows a blank line has
+# nothing to end, and LaTeX stops with "There's no line here to end." That is what a hand-written header
+# often does: \begin{center} then \\[2pt]. These environments start a fresh, empty paragraph.
+_OPENS_EMPTY = re.compile(r"\\begin\s*\{(?:center|flushleft|flushright|document|minipage|quote)\}")
+_BREAK_AT_START = re.compile(r"^([ \t]*)(\\\\\*?(?:\[[^\]\n]*\])?)[ \t]*")
+
+
+def find_stray_breaks(source: str) -> list[tuple[int, int, int]]:
+    """(line number, start offset, end offset) of each line break that has no line to end.
+
+    A break is stray when it is the first thing after a blank line or after the opening of an
+    environment that starts empty. Comment lines are skipped, and a break after real text is left alone.
+    """
+    found: list[tuple[int, int, int]] = []
+    pos = 0
+    empty = True  # nothing has been written on the current line of text yet
+    for number, line in enumerate(source.splitlines(keepends=True), 1):
+        stripped = line.strip()
+        start = pos
+        pos += len(line)
+        if stripped.startswith("%"):
+            continue
+        if not stripped:
+            empty = True
+            continue
+        m = _BREAK_AT_START.match(line)
+        if m and empty:
+            found.append((number, start, start + m.end(2)))
+        # after this line, is the next line starting a fresh empty paragraph?
+        empty = bool(_OPENS_EMPTY.search(stripped)) and stripped.endswith("}")
+    return found
+
+
 def lint_source(doc: ParsedResume, engine: str) -> list[LintIssue]:
     s = doc.masked
     issues: list[LintIssue] = []
@@ -144,6 +177,15 @@ def lint_source(doc: ParsedResume, engine: str) -> list[LintIssue]:
             "multi_file", "warn",
             f"Your resume loads other files from its Overleaf project ({shown}), and only this file was pasted, so those parts are missing. "
             "Open each file in Overleaf and paste its contents in place of its \\input line.",
+        ))
+    stray = find_stray_breaks(doc.source)
+    if stray:
+        first = stray[0][0]
+        issues.append(LintIssue(
+            "stray_linebreak", "warn",
+            f"Line {first} starts with a line break (\\\\) that has no line before it to end, which stops the resume compiling "
+            "(\u201cThere's no line here to end\u201d). Remove it.",
+            fixable=True,
         ))
     images = [m.group(1) for m in _GRAPHICS_RE.finditer(s)]
     if images:
@@ -176,6 +218,17 @@ def lint_source(doc: ParsedResume, engine: str) -> list[LintIssue]:
 
 def apply_lint_fix(source: str, fix_id: str) -> str:
     """Apply a one-click fix to the source. Unknown fixes return the source unchanged."""
+    if fix_id == "stray_linebreak":
+        out = source
+        for _line, start, end in reversed(find_stray_breaks(source)):  # from the end, so offsets stay valid
+            rest_of_line = out[end : out.find("\n", end) if out.find("\n", end) != -1 else len(out)]
+            line_start = out.rfind("\n", 0, start) + 1
+            if not rest_of_line.strip():  # the break was the whole line: remove the line, not just its text
+                line_end = out.find("\n", end)
+                out = out[:line_start] + out[(line_end + 1 if line_end != -1 else len(out)) :]
+            else:
+                out = out[:start] + out[end:]
+        return out
     if fix_id == "images":
         return _GRAPHICS_RE.sub("", source)
     if fix_id == "glyphtounicode":

@@ -65,6 +65,14 @@ class Followup(BaseModel):
     question: str = Field(description="One short question, such as: What did you build with it, and what changed?")
 
 
+class ProjectDraft(BaseModel):
+    """The bullets for one new project, written from one answer."""
+
+    answer: str = Field(description="The id of the answer these bullets are written from")
+    bullets: list[str] = Field(default_factory=list, description="Two to four bullets, plain text, **bold** allowed")
+
+
 class Draft(BaseModel):
     ops: list[PlanOp] = Field(default_factory=list)
+    projects: list[ProjectDraft] = Field(default_factory=list)
     followups: list[Followup] = Field(default_factory=list)

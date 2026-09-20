@@ -387,6 +387,31 @@ def _check_text(
     return None
 
 
+def check_standalone_bullet(text: str, source: str, budget: int) -> tuple[str, str] | None:
+    """Check a bullet for a project that isn't on the resume, so it has no entry to borrow facts from.
+
+    The only source of truth is `source`: what the person wrote about it, plus the name, technologies
+    and dates they gave. A tool or number that isn't in there is refused, the same way an invented one
+    is in an ordinary bullet.
+    """
+    body = (text or "").strip()
+    if not body:
+        return "empty", "The bullet is empty."
+    if re.search(r"\\[A-Za-z]+|\\\\", body):
+        return "latex", "Write plain text with **bold** only; TailorTeX writes the LaTeX itself."
+    plain = body.replace("**", "")
+    if len(plain) > budget:
+        return "too_long", f"The bullet is {len(plain)} characters; keep it under {budget} so it fits on one or two lines."
+    invented = [w for w in specific_terms(plain) if not contains_term(source, w) and not _in_text(source, w)]
+    if invented:
+        return "invented_term", f"{', '.join(repr(w) for w in invented[:5])} {_be(invented)} in what you told us about this project."
+    allowed = metrics(source)
+    bad = [s_ for s_, val, cls in metrics(plain) if not metric_allowed(val, cls, allowed)]
+    if bad:
+        return "invented_number", f"{', '.join(repr(n) for n in bad[:5])} {'doesn' if len(bad) == 1 else 'don'}'t come from what you told us about this project."
+    return None
+
+
 def _be(items: list) -> str:
     return "isn't" if len(items) == 1 else "aren't"
 

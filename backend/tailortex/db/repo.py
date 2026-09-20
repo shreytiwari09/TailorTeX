@@ -357,8 +357,9 @@ async def save_run(db: AsyncSession, profile: Profile, jd: str, source_tex: str,
     pdf = base64.b64decode(result["pdf"]) if result.get("pdf") else None
     analysis = result.get("analysis", {})
     run = Run(
-        profile_id=profile.id, job_title=analysis.get("title", ""), company=analysis.get("company"), jd=jd, source_tex=source_tex,
-        tex=result.get("tex", ""), pdf=pdf, result={k: v for k, v in result.items() if k not in ("pdf", "tex")},
+        profile_id=profile.id, job_title=analysis.get("title", ""), company=analysis.get("company"), jd=jd,
+        source_tex=result.get("source_tex") or source_tex,  # the file the tailoring really started from
+        tex=result.get("tex", ""), pdf=pdf, result={k: v for k, v in result.items() if k not in ("pdf", "tex", "source_tex")},
         must_before=result.get("before", {}).get("must_have"), must_after=result.get("after", {}).get("must_have"),
         reward=result.get("reward"), provider=result.get("usage", {}).get("provider"), model=result.get("usage", {}).get("model"),
     )

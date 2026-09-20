@@ -138,7 +138,13 @@ export function RunPage() {
 
   const onDrafted = (r: AnswerResult) => {
     setDrafted((d) => [...d, ...r.ops.map((op, i) => ({ op, change: r.changes[i] }))])
-    setToast(r.ops.length ? `${r.ops.length} ${r.ops.length === 1 ? 'bullet' : 'bullets'} written. Review ${r.ops.length === 1 ? 'it' : 'them'} below.` : 'Nothing could be written from that yet.')
+    const bullets = r.ops.length
+    const projects = r.projects.length
+    const parts = [
+      bullets ? `${bullets} ${bullets === 1 ? 'bullet' : 'bullets'}` : '',
+      projects ? `${projects} ${projects === 1 ? 'project' : 'projects'} to paste into Overleaf` : '',
+    ].filter(Boolean)
+    setToast(parts.length ? `Written: ${parts.join(' and ')}.` : r.followups.length ? 'We need a little more detail: see the question under the skill.' : 'Nothing could be written from that yet.')
   }
   const acceptDrafted = (d: Drafted) => {
     setExtra((x) => [...x, d.op])
@@ -215,6 +221,8 @@ export function RunPage() {
           acceptedOps={chosenOps()}
           drafted={drafted}
           hasModel={!!profile?.model.key_saved || serverKey}
+          engine={run.engine}
+          filename={filename}
           onDrafted={onDrafted}
           onAccept={acceptDrafted}
           onDiscard={(d) => setDrafted((list) => list.filter((y) => y !== d))}

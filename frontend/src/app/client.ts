@@ -54,10 +54,31 @@ export type RunSummary = {
   filename: string | null
 }
 export type SavedRun = Result & { saved_run_id: string; jd: string; accepted_ops?: Op[] }
-export type AnswerIn = { term: string; text: string; target?: string | null }
+export type ProjectInfo = { name: string; dates: string; tech: string[] }
+export type AnswerIn = { term: string; text: string; target?: string | null; project?: ProjectInfo | null }
+export type ProjectSnippet = {
+  answer: string
+  term: string
+  name: string
+  dates: string
+  tech: string[]
+  style: 'jake' | 'hfill' | 'plain'
+  bullets: string[]
+  latex: string
+  where: string
+  tex_with_project: string
+  compiles: boolean | null
+  pages: number | null
+  page_limit: number
+  over_limit: boolean
+  ats_before: number
+  ats_after: number
+  terms: string[]
+}
 export type AnswerResult = {
   ops: Op[]
   changes: Change[]
+  projects: ProjectSnippet[]
   blocked: { rule: string; message: string; text: string | null; op: string }[]
   followups: { term: string; question: string }[]
   superseded: string[]

@@ -26,7 +26,7 @@ def is_answer(evidence_id: str) -> bool:
     return bool(ANSWER_ID.match(evidence_id))
 
 
-def answer_to_evidence(term: str, text: str, n: int) -> EvidenceItem:
+def answer_to_evidence(term: str, text: str, n: int, project: str | None = None) -> EvidenceItem:
     """The person's words about one requirement, as a fact a bullet may cite.
 
     The skill they were asked about is added to the item's skills only if their own text mentions it,
@@ -37,7 +37,7 @@ def answer_to_evidence(term: str, text: str, n: int) -> EvidenceItem:
     return EvidenceItem(
         id=f"ans{n}",
         source="fact",
-        title=f"What you told us about {term}"[:120],
+        title=(f"Project: {project}" if project else f"What you told us about {term}")[:120],
         text=body,
         skills=skills,
     )

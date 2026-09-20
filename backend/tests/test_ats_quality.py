@@ -357,3 +357,24 @@ def test_a_result_carries_the_score_the_gains_and_a_gain_per_change():
     assert r["gains"]["gaps"] and all(g["gain"] > 0 for g in r["gains"]["gaps"])
     assert all("gain" in c and "terms" in c for c in r["changes"])
     assert sum(c["gain"] for c in r["changes"]) > 0
+
+
+def test_a_version_that_scores_lower_than_the_original_says_so():
+    """Keyword coverage can be untouched while a rewrite reads worse; the score shouldn't dip in silence."""
+    import asyncio
+
+    from conftest import MockLLM
+    from test_pipeline_learn import ANALYSIS
+    from tailortex.pipeline.tailor import TailorInput, tailor
+
+    weaker = {"ops": [{"op": "rewrite", "target": "s1.e0.b1", "reason": "x",
+                       "text": "Responsible for the p95 latency of the settlement report, from 4.2s to 900ms by adding Redis caching and rewriting two PostgreSQL queries"}]}
+    r = asyncio.run(tailor(TailorInput(tex=JAKE, jd="Python, Kubernetes", compile_pdf=False), MockLLM(ANALYSIS, [weaker])))
+    assert r["changes"] and r["ats"]["after"] < r["ats"]["before"]
+    note = next(w for w in r["warnings"] if "scores" in w and "lower" in w)
+    assert "lower than your original" in note and "Untick" in note
+
+    better = {"ops": [{"op": "rewrite", "target": "s1.e0.b0", "reason": "x",
+                       "text": "Developed **REST APIs** in Python and Flask for merchant onboarding, used by 1,200 merchants in the first quarter"}]}
+    ok = asyncio.run(tailor(TailorInput(tex=JAKE, jd="Python, Kubernetes, REST APIs", compile_pdf=False), MockLLM(ANALYSIS, [better])))
+    assert not any("lower than your original" in w for w in ok["warnings"])  # no false alarm when it went up

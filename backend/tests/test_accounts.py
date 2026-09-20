@@ -658,3 +658,28 @@ def test_nobody_else_can_answer_for_your_run(client, monkeypatch):
     r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": PYTORCH}]})
     assert r.status_code == 404
     assert not [e for e in client.get("/api/profile/context").json()["entries"] if e["id"].startswith("ans")]
+
+
+@needs_db
+def test_a_separate_project_comes_back_as_latex_and_the_answer_is_still_kept(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.plans = [{"ops": [], "followups": [], "projects": [{"answer": "ans1", "bullets": [
+        "Trained a **PyTorch** model in **Python** that flags fraudulent card transfers",
+        "Cut manual review time by **30%** by ranking the transfers most likely to be fraud"]}]}]
+    llm.plan_calls = 0
+    text = "For a course project I trained a PyTorch model in Python that flags fraudulent card transfers and cut manual review time by 30%"
+    r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{
+        "term": "PyTorch", "text": text, "project": {"name": "Fraud Detector", "dates": "Jan 2026 - Apr 2026", "tech": ["PyTorch", "Python"]}}]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ops"] == [] and len(body["projects"]) == 1
+    p = body["projects"][0]
+    assert "\\resumeProjectHeading" in p["latex"] and "Fraud Detector" in p["tex_with_project"] and p["ats_after"] > p["ats_before"]
+    assert next(e for e in client.get("/api/profile/context").json()["entries"] if e["id"] == "ans1")["title"] == "Project: Fraud Detector"
+    # nothing was changed in the saved resume: pasting it into Overleaf is the person's step
+    assert "Fraud Detector" not in client.get(f"/api/runs/{run_id}").json()["tex"]
+
+    # a project with no name is turned away before a model is called
+    calls = llm.plan_calls
+    bad = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": text, "project": {"name": " ", "tech": []}}]})
+    assert bad.status_code in (400, 422) and llm.plan_calls == calls

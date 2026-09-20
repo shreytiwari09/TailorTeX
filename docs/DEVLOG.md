@@ -459,6 +459,57 @@ bullets to entries that already exist.
 **Reopening a run** now shows what the person chose (`accepted_ops` is stored), so a run they trimmed doesn't
 come back with every suggestion ticked.
 
+## 26. A resume that won't compile, and a project TailorTeX can't create
+
+**The user's resume didn't compile**, so every run said "your original resume doesn't compile, so PDF checks
+are off": no PDF, no readability checks, half the score tiles empty. The error was `There's no line here to
+end`, at line 33.
+
+**Cause.** A hand-written header: `\begin{center}` and then `\\[2pt]` as the very first thing inside it. A
+line break has to end a line of something, and there was nothing before it. Removing that one line makes it
+compile to one page, 84% full, with all six parse checks passing. It is a common mistake in hand-written
+headers, so it is handled in three places rather than only in this one file:
+
+1. **Lint, with a one-click fix.** `find_stray_breaks` finds a `\\` that is the first thing after a blank line
+   or after `\begin{center|flushleft|flushright|document|...}`, skipping comment lines, and leaves breaks after
+   real text alone. It names the line, and the resume editor already shows a "Fix it" button for any fixable
+   lint issue, so the person sees it before they ever tailor. The fix removes the whole line, or just the break
+   if there was text after it.
+2. **Tailoring repairs it.** If the original won't compile and a known fix makes it compile, the run uses the
+   repaired file, says so in words ("line 33 starts with a line break with nothing before it to end. We removed
+   it in this version so you get a PDF. Remove it from your Overleaf file too."), and stores the *repaired*
+   source, because a later rebuild starts from the stored source and would otherwise fail on the same line. A
+   repair is only adopted if the fixed file really compiles, so it can't make things worse, and an error we
+   don't recognise is reported exactly as before.
+3. The user's stored resume was fixed directly (one line removed; the original is kept in their earlier runs).
+   They still have to remove it from their Overleaf file, since that is where the resume really lives.
+
+**A new project can't be created, so we write the code.** The parser can edit the bullets of an entry that
+exists but can't create an entry, which needs a heading's structure to be cloned. Rather than pretend, "It was
+a separate project" in the skills panel asks for a name, dates and technologies and returns **LaTeX to paste
+into Overleaf**, in the style the resume already uses:
+- `jake`: `\resumeProjectHeading{...}{...}` with `\resumeItemListStart`, for Jake's template and its variants.
+- `hfill`: `\textbf{Name} \hfill dates \\`, a `\textit{Tech: ...}` line and an `itemize`, which is exactly how
+  the user's own resume writes projects. Judged from the first project already in the file.
+- Every piece of text, including the name and the dates, goes through the escaper, and a test feeds it
+  `\input{evil}` and `\write18` and compiles the result.
+
+The card gives numbered steps (copy, paste *after your last project*, recompile), a Copy button, a button that
+opens the whole resume in Overleaf with the block already inserted, a check that the resume **still compiles**
+with it and its **page count against the limit**, what it adds to the ATS score, and a short note on why the
+block is ATS-safe.
+
+**It is still checked against what the person said.** A project has no entry to borrow facts from, so its
+bullets are validated against *only* their answer plus the name, technologies and dates they gave
+(`check_standalone_bullet`): a tool that isn't in there is refused, a number that isn't is refused, and the
+dates they typed are allowed as numbers but a different year is not. A refused draft becomes a question, not
+silence. One model call still covers every answer, whether it is about an existing job or a new project.
+
+**A dip that wasn't visible.** A real run on the user's account came out at 40.4% -> 40.0%. The keyword guard
+was fine; a rewrite had made a bullet read slightly worse (writing quality 95% -> 90%). The score now says so:
+"This version scores 0.4% lower than your original. It mostly comes from how the reworded bullets read... Untick
+the changes that don't help." A test covers both directions, so it doesn't cry wolf when the score rose.
+
 ## Test status
 
-175 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+194 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
