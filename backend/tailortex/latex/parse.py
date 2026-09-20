@@ -13,6 +13,7 @@ that live in their class files are known by name.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -166,6 +167,12 @@ KNOWN_HEADING_MACROS = {
     "cvevent": 4,
 }
 SECTION_COMMANDS = {"section", "section*", "cvsection"}
+# Commands the editor can read but not write back: a rewritten bullet would silently lose them.
+LOSSY_STYLES = {
+    "textit", "emph", "it", "em", "underline", "textsc", "textrm", "textsf", "texttt", "small",
+    "footnotesize", "scriptsize", "mbox", "hbox", "newline", "linebreak", "nobreak",
+}
+
 SIMPLE_COMMANDS = {
     "textbf", "textit", "emph", "underline", "textsc", "textrm", "textsf", "texttt", "small",
     "footnotesize", "scriptsize", "normalsize", "ldots", "dots", "textbar", "textasciitilde",
@@ -258,6 +265,15 @@ def _is_simple(fragment: str) -> tuple[bool, str | None]:
     for m in re.finditer(r"\\([A-Za-z@]+)", fragment):
         if m.group(1) not in SIMPLE_COMMANDS:
             return False, f"uses \\{m.group(1)}"
+        if m.group(1) in LOSSY_STYLES:
+            return False, f"has formatting (\\{m.group(1)}) that rewriting would lose"
+    if "\\\\" in fragment:
+        return False, "has a forced line break that rewriting would lose"
+    for m in re.finditer(r"(?<!\\)\$([^$]*)\$", fragment):
+        if re.search(r"[\^_]", m.group(1)):
+            return False, "has math that rewriting would lose"
+    if any(ord(c) > 0xFF or unicodedata.combining(c) for c in latex_to_plain(fragment)):
+        return False, "has accented letters that rewriting would lose"
     return True, None
 
 

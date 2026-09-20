@@ -633,3 +633,19 @@ used scikit-learn" skipped it; "why do you keep asking about statistics?" got a 
 ## Test status
 
 233 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+
+## 30. Tested against many resumes, not the one it was built around
+
+A corpus of twelve differently written resumes (`backend/tests/corpus/resumes`: article class, tabular
+layout, custom macros, two-page academic, description-list skills, photo header, accented text, and
+moderncv / awesome-cv styles) plus the Jake template now runs through `tests/test_corpus.py`.
+
+What it found: 13 of 21 inline constructs (italics, monospace, underline, small caps, math with scripts,
+forced line breaks, accents outside Latin-1) were silently changed when a bullet was rewritten, because the
+text layer reads them but can only write bold back. Fix: a bullet or skills line that contains one of those
+is now locked with a reason instead of being edited, so the template is never damaged. The trade-off is
+that such a bullet can't be tailored; carrying italics and monospace through a rewrite is the next step.
+
+Still open: skills lines are only detected as editable in labelled-line styles (`\item \textbf{Label:}`,
+`\textbullet{}` lines, tabular rows). A plain comma paragraph under a Skills heading falls back to
+"paste this code".
