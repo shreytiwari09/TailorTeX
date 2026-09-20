@@ -158,5 +158,5 @@ def test_a_skill_the_job_never_listed_and_the_person_never_said_is_still_refused
 
 
 def test_the_reply_never_claims_an_addition_that_didnt_happen():
-    out, _ = say("add Kubernetes", {"reply": "I have added Kubernetes to your skills.", "skills": [{"term": "Kubernetes", "line": "s0.k1"}], "handled": []}, focus=None)
+    out, _ = say("add it to skills", {"reply": "I have added Kubernetes to your skills.", "skills": [{"term": "Kubernetes", "line": "s0.k1"}], "handled": []}, focus=None)
     assert out["ops"] == [] and out["reply"].startswith("I didn't change your resume")
