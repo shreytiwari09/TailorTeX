@@ -27,8 +27,10 @@ from ..learn.style import StyleMemory
 from ..llm.client import LLMClient, LLMError
 from ..llm.providers import PROVIDERS, detect_provider
 from ..ops import Op
-from ..pipeline.tailor import TailorInput, rebuild
-from ..types import EvidenceItem, JobAnalysis
+from ..evidence.answers import answer_to_evidence, next_answer_number
+from ..ats.gain import ats_score
+from ..pipeline.tailor import TailorInput, answer_gaps, rebuild
+from ..types import Answer, EvidenceItem, JobAnalysis
 from . import main as core
 
 router = APIRouter(prefix="/api")
@@ -442,6 +444,11 @@ class RunRebuildIn(BaseModel):
     compile: bool = True
 
 
+class AnswersIn(BaseModel):
+    answers: list[Answer] = Field(min_length=1, max_length=6)
+    ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
+
+
 def _evidence(profile: Profile, entries: list[EvidenceItem]) -> list[EvidenceItem]:
     items = list(entries)
     if profile.skills:
@@ -500,7 +507,41 @@ async def rebuild_run(run_id: str, body: RunRebuildIn, request: Request, profile
                             _evidence(profile, await repo.list_context(db, profile)), body.compile, run.result.get("page_limit"))
     except UnsafeLatexError as e:
         raise HTTPException(400, str(e)) from None
-    await repo.update_run_output(db, run, out["tex"], out["pdf"], out["after"], out["warnings"])
+    out["ats"] = ats_score(out["after"])
+    await repo.update_run_output(db, run, out["tex"], out["pdf"], out["after"], out["warnings"],
+                                 accepted=[o.model_dump() for o in body.ops], ats_after=out["ats"])
+    return out
+
+
+@router.post("/runs/{run_id}/answers")
+async def answer_run(run_id: str, body: AnswersIn, request: Request, profile: Profile = Depends(current), db: AsyncSession = Depends(db_session)):
+    """The person told us about skills the job wants and their resume doesn't show.
+
+    Their words are stored as context (so every later tailoring can use them), a bullet is drafted from
+    each and checked against what they said, and the drafts come back to be accepted. Nothing changes
+    in the saved resume until they accept and rebuild.
+    """
+    core.rate_limit(request, "tailor")
+    run = await repo.own_run(db, profile, run_id)
+    if run is None:
+        raise HTTPException(404, "No such resume.")
+    for a in body.answers:
+        if len(a.text.strip()) < 12:
+            raise HTTPException(400, f"Tell us a little more about {a.term}: what you did with it, or what came of it.")
+    llm = llm_for(profile)
+    await core.ensure_model(llm)
+    context = await repo.list_context(db, profile)
+    analysis = JobAnalysis.model_validate(run.result.get("analysis") or {})
+    out = await answer_gaps(run.source_tex, analysis, _evidence(profile, context), body.answers, body.ops, llm)
+    # keep what they told us: a permanent fact, findable by meaning in every future tailoring
+    items = [EvidenceItem.model_validate(e) for e in out["evidence"]]
+    saved = await repo.add_source(db, profile, "fact", items)
+    # The drafted bullets cite these ids. If storing had to renumber one, a bullet would cite evidence
+    # that doesn't exist, so refuse loudly rather than hand back a draft that can't be applied.
+    if [e.id for e in saved] != [e.id for e in items]:
+        raise HTTPException(409, "Your context changed while this was being written. Please try again.")
+    out["evidence"] = [e.model_dump() for e in saved]
+    out["usage"] = {"model": llm.model, "calls": llm.usage.calls}
     return out
 
 

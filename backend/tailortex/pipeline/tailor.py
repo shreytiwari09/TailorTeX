@@ -32,11 +32,12 @@ from ..learn.arms import ARMS
 from ..learn.bandit import Bandit, context_key
 from ..learn.style import StyleMemory
 from ..llm.client import LLMClient, LLMError
-from ..llm.prompts import ANALYZE_SYSTEM, analyze_user, plan_system, plan_user, retry_user
-from ..llm.schemas import Plan
+from ..llm.prompts import ANALYZE_SYSTEM, analyze_user, draft_system, draft_user, plan_system, plan_user, retry_user
+from ..llm.schemas import Draft, Plan
 from ..ops import Op
 from ..reward.reward import RewardInput, reward
-from ..types import EvidenceItem, JobAnalysis
+from ..evidence.answers import answer_to_evidence, next_answer_number
+from ..types import Answer, EvidenceItem, JobAnalysis
 from ..validate.validate import ValidationContext, Violation, validate_ops
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -44,6 +45,7 @@ Emit = Callable[[dict], Awaitable[None]]
 Ranker = Callable[[JobAnalysis, list[EvidenceItem]], Awaitable[tuple[list[EvidenceItem], str | None]]]
 MAX_RETRIES = 2
 MAX_FIT_DROPS = 8
+MAX_DRAFT_RETRIES = 1  # one repair pass: each round costs a model call, and free tiers allow about twenty a day
 
 
 class TailorError(Exception):
@@ -549,4 +551,74 @@ async def rebuild(tex: str, ops: list[Op], analysis: JobAnalysis, evidence: list
         "coverage": [c.to_dict() for c in cov],
         "applied": [o.model_dump() for o in applied],
         "warnings": warnings,
+    }
+
+
+
+def _accepted_overlay(doc: ParsedResume, accepted: list[Op]) -> dict[str, str | None]:
+    """What each block reads as once the already-accepted changes are in, so a draft sees the current
+    wording while its block ids stay those of the original file."""
+    overlay: dict[str, str | None] = {}
+    for op in accepted:
+        if op.op == "rewrite" and op.text is not None:
+            overlay[op.target] = op.text
+        elif op.op == "drop":
+            overlay[op.target] = None
+    return overlay
+
+
+async def answer_gaps(
+    source_tex: str,
+    analysis: JobAnalysis,
+    evidence: list[EvidenceItem],
+    answers: list[Answer],
+    accepted: list[Op],
+    llm: LLMClient,
+    emit: Emit = _noop,
+) -> dict:
+    """Turn the person's own words into checked bullets. One model call covers every answer.
+
+    Nothing is applied or compiled here: the caller shows the drafted changes, the person accepts,
+    and the existing rebuild applies them together with the ones already accepted.
+
+    The drafted operations keep source="model". That is deliberate and load-bearing: source="user"
+    skips every fabrication check, which is right for text a person typed and wrong for text a model
+    wrote from their answer. Here the answer is the evidence, so a tool or number that isn't in what the
+    person said is rejected like any other invention.
+    """
+    doc = parse_resume(source_tex)
+    stored = [answer_to_evidence(a.term, a.text, next_answer_number([e.id for e in evidence]) + i) for i, a in enumerate(answers)]
+    all_evidence = [*evidence, *stored]
+    overlay = _accepted_overlay(doc, accepted)
+    accepted_targets = {o.target for o in accepted}
+
+    system = draft_system(doc.bullet_budget)
+    base = draft_user(doc, overlay, all_evidence, list(zip(answers, stored)), analysis)
+    vctx = ValidationContext(doc=doc, evidence=all_evidence, analysis=analysis)
+
+    await emit(_event("draft", "start", f"Writing {len(answers)} bullet{'s' if len(answers) != 1 else ''} from what you told us"))
+    message, blocked, followups, ops = base, [], [], []
+    for attempt in range(1, MAX_DRAFT_RETRIES + 2):
+        draft = await llm.complete(system, message, Draft)
+        ops = normalize_ops(doc, [p.to_op() for p in draft.ops])
+        followups = [f.model_dump() for f in draft.followups]
+        result = validate_ops(ops, vctx)
+        blocked = [{"attempt": attempt, "op": v.op.describe(), "rule": v.rule, "message": v.message, "text": v.op.text, "retried": attempt <= MAX_DRAFT_RETRIES}
+                   for v in result.violations]
+        if not result.violations or attempt > MAX_DRAFT_RETRIES:
+            break
+        message = retry_user(base, [o.model_dump() for o in ops], [f"{v.op.describe()}: {v.message}" for v in result.violations])
+
+    valid = result.valid
+    # a new bullet may not land on a block the person already changed: the newer suggestion replaces it
+    superseded = [o.target for o in valid if o.target in accepted_targets and o.op != "add"]
+    changes = describe_changes(doc, valid, analysis)
+    await emit(_event("draft", "done", f"{len(valid)} bullet{'s' if len(valid) != 1 else ''} ready to review"))
+    return {
+        "ops": [o.model_dump() for o in valid],
+        "changes": changes,
+        "blocked": blocked,
+        "followups": followups,
+        "superseded": superseded,
+        "evidence": [e.model_dump() for e in stored],
     }

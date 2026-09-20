@@ -76,7 +76,20 @@ Reply with {{"ops":[...]}}.
 Strategy for this attempt: {strategy}{style}"""
 
 
-def render_resume(doc: ParsedResume) -> str:
+def render_resume(doc: ParsedResume, overlay: dict[str, str | None] | None = None) -> str:
+    """The resume outline for the model, with block ids.
+
+    `overlay` maps a block id to the text it will have once already-accepted changes are applied
+    (None means it was dropped), so a later request sees the current wording while ids stay those of
+    the original file and can still be applied together with the earlier changes.
+    """
+    overlay = overlay or {}
+
+    def shown(b) -> str:
+        if b.id in overlay:
+            return "(removed)" if overlay[b.id] is None else str(overlay[b.id])
+        return b.text
+
     lines: list[str] = []
     for s in doc.sections:
         tag = " (LOCKED)" if s.locked else ""
@@ -85,14 +98,14 @@ def render_resume(doc: ParsedResume) -> str:
         for b in s.blocks:
             lock = " (LOCKED)" if b.locked and not s.locked else ""
             if b.kind == "skills":
-                lines.append(f"  [{b.id}] {b.label}: {b.text}{lock}")
+                lines.append(f"  [{b.id}] {b.label}: {shown(b)}{lock}")
             else:
-                lines.append(f"  [{b.id}] {b.text}{lock}")
+                lines.append(f"  [{b.id}] {shown(b)}{lock}")
         for e in s.entries:
             lines.append(f"  [{e.id}] {e.heading or '(no heading)'}")
             for b in e.bullets:
                 lock = " (LOCKED)" if b.locked and not s.locked else ""
-                lines.append(f"    [{b.id}] {b.text}{lock}")
+                lines.append(f"    [{b.id}] {shown(b)}{lock}")
     return "\n".join(lines)
 
 
@@ -176,3 +189,44 @@ def retry_user(base: str, previous_ops: list[dict], rejected: list[str]) -> str:
 
 STYLE_SYSTEM = """You summarize a user's resume-writing preferences from their edits.
 You get pairs of (suggested bullet, what the user kept or wrote instead). Write up to 6 short, specific style rules this user follows, such as "Keeps bullets to one line" or "Prefers 'Built' over 'Developed'". Only include rules the examples clearly support. Reply with {"rules": [...]}."""
+
+
+DRAFT_SYSTEM = """You turn things a candidate told us about themselves into resume bullets.
+
+Each <answer> is the candidate's own words about a skill the job asks for. It is the ONLY new source of truth. TailorTeX checks every tool name and every number in a bullet you write against that answer's text and against the entry you attach the bullet to, and rejects anything else. Do not add a tool, product, company or figure the answer does not contain.
+
+For each answer:
+- Write ONE bullet (two only if the answer clearly describes two separate pieces of work).
+- Give it the shape what / how / result: what was built or changed, the tool or method the answer names, and the outcome.
+- Use a number ONLY if the answer contains it, written the same way. If the answer has no number, end on a concrete outcome in words instead. Never estimate, round or combine figures.
+- Attach it to the entry named in "target". With no target, choose the entry whose work it belongs to, and say why in "reason".
+- Cite the answer's id in "evidence".
+- If the answer is too thin for a bullet, such as a bare claim ("I know PyTorch") with no project, context or outcome, write NO operation for it. Add a followup instead: one short question that would make it usable, such as "What did you build with PyTorch, and what changed because of it?".
+
+{ats_rules}
+
+Operations use the same format as before, for adding a bullet to an entry:
+{{"op":"add","target":"s1.e0","after":"s1.e0.b1","text":"...","evidence":["ans1"],"reason":"..."}}
+
+Reply with {{"ops":[...],"followups":[{{"term":"...","question":"..."}}]}}."""
+
+
+def draft_system(budget: int, min_chars: int = MIN_BULLET_CHARS) -> str:
+    return DRAFT_SYSTEM.format(ats_rules=ATS_RULES.format(min_chars=min_chars, budget=budget))
+
+
+def draft_user(doc: ParsedResume, overlay: dict[str, str | None], evidence: list[EvidenceItem], answers: list, analysis: JobAnalysis) -> str:
+    """The resume as it stands, the job, and the candidate's answers.
+
+    `answers` pairs each Answer with the EvidenceItem it was stored as, so the model can cite its id.
+    """
+    parts = []
+    for a, item in answers:
+        target = f' target="{a.target}"' if a.target else ""
+        parts.append(f'<answer id="{item.id}" skill="{a.term}"{target}>\n{item.text}\n</answer>')
+    return (
+        "<resume>\n" + render_resume(doc, overlay) + "\n</resume>\n\n"
+        "<job>\n" + f"Title: {analysis.title}" + (f" at {analysis.company}" if analysis.company else "")
+        + "\nMust have: " + "; ".join(t.term for t in analysis.must_have) + "\n</job>\n\n"
+        "<answers>\n" + "\n".join(parts) + "\n</answers>"
+    )

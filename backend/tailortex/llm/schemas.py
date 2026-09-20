@@ -56,3 +56,15 @@ class PlanOp(BaseModel):
 
 class Plan(BaseModel):
     ops: list[PlanOp] = Field(default_factory=list)
+
+
+class Followup(BaseModel):
+    """A question that would make a too-thin answer usable."""
+
+    term: str
+    question: str = Field(description="One short question, such as: What did you build with it, and what changed?")
+
+
+class Draft(BaseModel):
+    ops: list[PlanOp] = Field(default_factory=list)
+    followups: list[Followup] = Field(default_factory=list)

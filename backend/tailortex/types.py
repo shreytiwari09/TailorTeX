@@ -47,3 +47,11 @@ class JobAnalysis(BaseModel):
     def terms(self) -> list[tuple[JobTerm, bool]]:
         """(term, is_must_have) pairs, must-haves first."""
         return [(t, True) for t in self.must_have] + [(t, False) for t in self.nice_to_have]
+
+
+class Answer(BaseModel):
+    """The person's own words about a skill the job asks for and nothing shows they have."""
+
+    term: str = Field(max_length=80)
+    text: str = Field(min_length=1, max_length=4000)
+    target: str | None = Field(default=None, max_length=40, description="The entry they say it belongs to, or None to let the model choose")

@@ -1,7 +1,7 @@
 import pytest
 
 from tailortex.llm.client import Usage
-from tailortex.llm.schemas import Plan
+from tailortex.llm.schemas import Draft, Plan
 from tailortex.types import JobAnalysis
 
 
@@ -25,10 +25,10 @@ class MockLLM:
         self.prompts.append((system, user))
         if schema is JobAnalysis:
             return JobAnalysis.model_validate(self.analysis)
-        assert schema is Plan
+        assert schema in (Plan, Draft)
         plan = self.plans[min(self.plan_calls, len(self.plans) - 1)]
         self.plan_calls += 1
-        return Plan.model_validate(plan)
+        return schema.model_validate(plan)
 
 
 @pytest.fixture(autouse=True)

@@ -564,3 +564,92 @@ def test_a_handful_of_repos_are_all_imported_without_asking(client, monkeypatch)
     monkeypatch.setattr(account.core, "import_repos", fake_import)
     r = client.post("/api/profile/context/links", json={"github": "asha"}).json()["results"][0]
     assert r["added"] == 3 and "choose" not in r  # forks aren't your work
+
+
+# --- telling us about skills the resume doesn't show -----------------------------------------------
+
+
+def _saved_run(client, monkeypatch):
+    """Sign up, store the sample resume and a run for a job that wants PyTorch."""
+    from tailortex.api import account
+
+    signup(client)
+    client.put("/api/profile/resume", json={"tex": JAKE})
+    analysis = {**ANALYSIS, "title": "ML Engineer",
+                "must_have": [{"term": "PyTorch", "weight": 3}, {"term": "Python", "weight": 3}, {"term": "TensorFlow", "weight": 2}]}
+    llm = MockLLM(analysis, [{"ops": []}])
+    monkeypatch.setattr(account, "llm_for", lambda profile: llm)
+    events = _stream(client, "/api/runs", {"jd": "ML Engineer: PyTorch, Python, TensorFlow", "compile": False})
+    assert events[-1]["type"] == "result", events[-1]
+    return events[-1]["saved_run_id"], llm
+
+
+PYTORCH = "At Finch Payments I trained a PyTorch model that flags fraudulent transfers and cut manual review time by 30%"
+PYTORCH_BULLET = {"ops": [{"op": "add", "target": "s1.e0", "after": "s1.e0.b1", "evidence": ["ans1"], "reason": "the job asks for PyTorch",
+                           "text": "Trained a PyTorch model that flags fraudulent transfers, cutting manual review time by 30%"}], "followups": []}
+
+
+@needs_db
+def test_an_answer_is_stored_as_context_drafted_and_applied_through_rebuild(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.plans = [PYTORCH_BULLET]
+    llm.plan_calls = 0
+
+    r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": PYTORCH, "target": "s1.e0"}]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["ops"]) == 1 and body["ops"][0]["evidence"] == ["ans1"] and body["ops"][0]["source"] == "model"
+    assert not body["blocked"] and body["changes"][0]["gain"] > 0
+
+    # it was kept as permanent context, so every later tailoring can use it
+    entries = client.get("/api/profile/context").json()["entries"]
+    stored = next(e for e in entries if e["id"] == "ans1")
+    assert stored["source"] == "fact" and stored["text"] == PYTORCH and "PyTorch" in stored["skills"]
+
+    # nothing changed in the saved resume yet: the draft has to be accepted first
+    assert "PyTorch model" not in client.get(f"/api/runs/{run_id}").json()["tex"]
+
+    # accepting = the ordinary rebuild, and it validates because the answer is now evidence
+    done = client.post(f"/api/runs/{run_id}/rebuild", json={"ops": body["ops"], "compile": False}).json()
+    assert "PyTorch model that flags fraudulent transfers" in done["tex"] and not done["warnings"]
+    saved = client.get(f"/api/runs/{run_id}").json()
+    assert "PyTorch model" in saved["tex"] and saved["accepted_ops"][0]["evidence"] == ["ans1"]  # reopening remembers the choice
+    assert saved["ats"]["after"] == done["ats"]
+
+
+@needs_db
+def test_a_second_round_gets_the_next_number_and_a_notes_save_leaves_answers_alone(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.plans = [PYTORCH_BULLET]
+    client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": PYTORCH}]})
+
+    second = {"ops": [{"op": "add", "target": "s1.e1", "after": "s1.e1.b0", "evidence": ["ans2"], "reason": "x",
+                       "text": "Built a TensorFlow classifier for support tickets that routed 2,000 tickets a week"}], "followups": []}
+    llm.plans, llm.plan_calls = [second], 0
+    r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{
+        "term": "TensorFlow", "text": "For the analytics team I built a TensorFlow classifier for support tickets that routed 2,000 tickets a week"}]})
+    assert r.status_code == 200 and r.json()["evidence"][0]["id"] == "ans2"
+
+    # a notes save only touches n1, n2, ... so the answers survive it
+    client.put("/api/profile/notes", json={"notes": "Led the robotics club"})
+    ids = {e["id"] for e in client.get("/api/profile/context").json()["entries"]}
+    assert {"ans1", "ans2", "n1"} <= ids
+
+
+@needs_db
+def test_a_one_line_claim_is_turned_away_before_a_model_is_called(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    calls = llm.plan_calls
+    r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": "I know it"}]})
+    assert r.status_code == 400 and "a little more about PyTorch" in r.json()["detail"]
+    assert llm.plan_calls == calls  # no model call was spent
+
+
+@needs_db
+def test_nobody_else_can_answer_for_your_run(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    client.post("/api/auth/signout")
+    signup(client, "ravi@example.com")
+    r = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": PYTORCH}]})
+    assert r.status_code == 404
+    assert not [e for e in client.get("/api/profile/context").json()["entries"] if e["id"].startswith("ans")]

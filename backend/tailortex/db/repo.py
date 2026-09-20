@@ -367,10 +367,18 @@ async def save_run(db: AsyncSession, profile: Profile, jd: str, source_tex: str,
     return run.id
 
 
-async def update_run_output(db: AsyncSession, run: Run, tex: str, pdf_b64: str | None, after: dict, warnings: list[str]) -> None:
+async def update_run_output(db: AsyncSession, run: Run, tex: str, pdf_b64: str | None, after: dict, warnings: list[str],
+                            accepted: list[dict] | None = None, ats_after: float | None = None) -> None:
+    """Store a rebuilt resume. `accepted` is the operations the person kept, so reopening the run shows
+    what they chose rather than every suggestion accepted again."""
     run.tex = tex
     run.pdf = base64.b64decode(pdf_b64) if pdf_b64 else None
-    run.result = {**run.result, "after": after, "warnings": warnings}
+    changed = {"after": after, "warnings": warnings}
+    if accepted is not None:
+        changed["accepted_ops"] = accepted
+    if ats_after is not None:
+        changed["ats"] = {**(run.result.get("ats") or {}), "after": ats_after}
+    run.result = {**run.result, **changed}
     run.must_after = after.get("must_have")
 
 

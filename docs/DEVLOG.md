@@ -371,6 +371,53 @@ gaining it earns. With must-haves weighted 3, 3, 2, 2, 1 (sum 11), adding the fi
 
 Gap gains are independent estimates, not additive across a whole set, so the interface will say "up to".
 
+## 24. Asking for what the resume doesn't show
+
+**The direction change.** The tool used to drop any job keyword it couldn't prove and say nothing useful about
+it: a real run scored 58% because four of nine required skills appeared nowhere in the person's material. The
+user's point was that the goal is a resume as close to the job as *honestly* possible, and an honest way to
+close a gap is to ask the person for the missing material, not to stay quiet.
+
+**Flow.** After a run, the keywords nothing backs are listed with what each would add (+4.5%, +3.8%, ...). The
+person writes anything about one — a line, a paragraph — and `POST /api/runs/{id}/answers` does the rest:
+1. Their words are stored as permanent context, so every later tailoring can use them and pgvector can find
+   them by meaning.
+2. **One** model call drafts a bullet from each answer (a batch, not one call per answer: a Gemini free key
+   allows about twenty a day).
+3. Every draft is validated, with the answers in the evidence list.
+4. The drafts come back **unapplied**. Nothing in the saved resume changes until the person accepts and the
+   ordinary rebuild applies them. Their choices are now stored, so reopening a run shows what they accepted
+   rather than every suggestion accepted again.
+
+**Why this doesn't break "never invents".** The person's sentence *is* the evidence, so the checks that were
+already there now run against it: a drafted bullet may only name tools and numbers that appear in what they
+said or in the entry it lands in. A test has the model add TensorFlow to an answer that only mentions
+PyTorch, and an 80% to an answer that says 30%; both are rejected.
+
+**A trap that was avoided.** `Op.source == "user"` skips every fabrication check, which is right for text a
+person typed into the diff editor and wrong here, where a model writes the bullet. Drafted operations keep
+`source="model"`, and a test asserts it, because the shortcut of marking them user-written would have
+silently switched all four checks off.
+
+**Details that mattered.**
+- An answer is stored as a `fact`, the only source the validator lets back a bullet in any section (`skill`
+  evidence may only reach the skills line; `github` and `portfolio` only projects).
+- Ids are `ans1`, `ans2`, ... The notes editor only ever touches `n1`, `n2`, ..., so a notes save can't delete
+  an answer. The endpoint refuses (409) rather than return drafts if storing had to renumber, since a bullet
+  citing evidence that doesn't exist can't be applied.
+- **A thin answer gets a question, not a bullet.** "I know PyTorch" has no project or outcome to write from,
+  so the model returns no operation and one follow-up ("What did you build with PyTorch, and what changed
+  because of it?"). A one-line claim is turned away before any model call is spent.
+- An answer that never says "PyTorch" doesn't quietly add it to the item's skills just because they were asked.
+- The draft sees the resume **as the person has already changed it** while keeping the original block ids, so
+  it composes with earlier accepted changes in one rebuild. A draft that lands on a block they already changed
+  says it replaces it.
+- One repair pass on a rejected draft, then stop: each round costs a call.
+
+**Not built (v1).** There is no operation that creates a whole new entry; only bullets can be added to an
+existing one. A brand-new project would need the parser to keep a heading's structure so it can be cloned.
+The interface will say this plainly instead of pretending.
+
 ## Test status
 
-157 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+175 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
