@@ -358,3 +358,20 @@ def test_ats_doc_covers_every_check_the_code_makes():
         assert check in doc, f"{check} is measured but not documented"
     for module in ("_check_coverage", "_check_stuffing", "ATS_RULES", "coverage_loss"):
         assert module in doc, f"{module} enforces a rule but isn't named in the doc"
+
+
+def test_the_prompts_never_push_the_model_to_manufacture_an_outcome():
+    """A real model turned "it worked well" into "enabling successful classification" because the prompt said to
+    end on a concrete outcome in words. Neither prompt may ask for an outcome that wasn't stated."""
+    from tailortex.llm.prompts import draft_system, plan_system
+
+    for prompt in (draft_system(220), plan_system(220, "balanced", [], [])):
+        assert "end on a concrete outcome" not in prompt
+        assert "never add an outcome that isn't stated" in prompt or "is an invention" in prompt
+
+
+def test_a_new_project_needs_one_supported_bullet_not_two():
+    from tailortex.llm.prompts import draft_system
+
+    text = draft_system(220)
+    assert "one strong bullet is enough" in text and "rather than asking for more" in text

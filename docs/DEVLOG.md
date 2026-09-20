@@ -565,6 +565,28 @@ wrote are dropped: an invented tidy name for their project would be a fabricated
 an unfinished first reply was kept as `ans1` and the finished one as `ans2`. Only a reply that produced a bullet
 or project is saved now.
 
+## 28. First contact with a real model
+
+Everything that turns a typed reply into a bullet had only ever run against a scripted model. Four synthetic
+replies (written for the test, not the user's experience, nothing saved) were sent to Gemini, and two of the
+four came back wrong. Both were prompt faults, not code faults:
+
+- **"It worked well" became "enabling successful classification".** The rule for a bullet with no number said to
+  "end on a concrete outcome in words instead", which pushes a model to make one up. The validator can't catch
+  this: no tool, name or number was invented, only a vague overclaim. The rule now says to state a result only
+  if one is stated, and otherwise to end on what was built or done. The same wording was in the planning prompt.
+- **A reply naming a project, its date, its tool and its accuracy got a question.** The draft prompt told the model a
+  new project needs two to four bullets, so a reply that supported one was "too thin". One strong bullet is
+  enough, and a follow-up is only for a reply that doesn't say what was built or with what.
+
+After the fixes, against the real model: work inside an existing project became a bullet with the exact numbers
+given; a separate named project became new-project code, keeping its name and date; a vague reply got a
+question; and "it worked well" got "what problem did it address, and what was its impact?" instead of an
+invented result. Tests now assert neither prompt asks for an unstated outcome.
+
+**What this does not settle:** four replies is a smoke test, not an evaluation, and the validator still can't
+catch a vague overclaim. That is why every drafted bullet is shown for the person to accept before it goes in.
+
 ## Test status
 
-208 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+216 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
