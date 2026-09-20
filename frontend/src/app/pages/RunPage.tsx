@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, type Evidence, type Op } from '../../api'
 import { base64ToBlob, downloadBlob, openInOverleaf, plain } from '../../util'
 import { useAuth } from '../auth'
-import { acct, type AnswerResult, type SavedRun } from '../client'
+import { acct, type ChatResult, type SavedRun } from '../client'
 import { atsOf, gainLabel } from '../format'
 import { SkillChat, type Drafted } from '../run/SkillChat'
 import { ChangeList, type Decision } from '../run/ChangeList'
@@ -88,9 +88,12 @@ export function RunPage() {
       if (d?.action === 'edited') return [{ ...op, text: d.text ?? op.text, source: 'user' as const }]
       return [op]
     })
-    // A bullet drafted from an answer may replace a change already made to the same block.
-    const replaced = new Set(extra.filter((o) => o.op !== 'add').map((o) => o.target))
-    return [...base.filter((o) => o.op === 'add' || !replaced.has(o.target)), ...extra]
+    // What the person added from the chat may replace a change already made to the same block, and where they
+    // built a line up in steps, only the last version of it counts (each one already includes the earlier).
+    const latest = new Map<string, Op>()
+    for (const o of extra) if (o.op !== 'add') latest.set(o.target, o)
+    const added = extra.filter((o) => o.op === 'add' || latest.get(o.target) === o)
+    return [...base.filter((o) => o.op === 'add' || !latest.has(o.target)), ...added]
   }, [run, decisions, extra])
 
   const sendFeedback = useCallback(() => {
@@ -126,15 +129,12 @@ export function RunPage() {
     if (run) setDecisions(Object.fromEntries(run.changes.map((c) => [c.id, { action: 'reverted' } as Decision])))
   }
 
-  const onDrafted = (r: AnswerResult) => {
-    setDrafted((d) => [...d, ...r.ops.map((op, i) => ({ op, change: r.changes[i] }))])
-    const bullets = r.ops.length
-    const projects = r.projects.length
-    const parts = [
-      bullets ? `${bullets} ${bullets === 1 ? 'bullet' : 'bullets'}` : '',
-      projects ? `${projects} ${projects === 1 ? 'project' : 'projects'} to paste into Overleaf` : '',
-    ].filter(Boolean)
-    setToast(parts.length ? `Written: ${parts.join(' and ')}.` : r.followups.length ? 'We need a little more detail: see the question under the skill.' : 'Nothing could be written from that yet.')
+  const onDrafted = (r: Pick<ChatResult, 'ops' | 'changes'>) => {
+    const fresh = r.ops.map((op, i) => ({ op, change: r.changes[i] }))
+    // A newer edit to a line (a Skills line, say) already contains the earlier one, so it replaces that card
+    // instead of sitting beside it, where accepting both would apply two rewrites of the same line.
+    const replaced = new Set(fresh.filter((f) => f.op.op !== 'add').map((f) => f.op.target))
+    setDrafted((d) => [...d.filter((x) => x.op.op === 'add' || !replaced.has(x.op.target)), ...fresh])
   }
   const acceptDrafted = (d: Drafted) => {
     setExtra((x) => [...x, d.op])

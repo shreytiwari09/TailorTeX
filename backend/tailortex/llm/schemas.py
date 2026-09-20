@@ -91,3 +91,20 @@ class SupportItem(BaseModel):
 
 class SupportReply(BaseModel):
     terms: list[SupportItem] = Field(default_factory=list)
+
+
+class SkillAdd(BaseModel):
+    term: str = Field(description="The skill exactly as the person said it")
+    line: str = Field(default="", description="The id of the Skills line it fits best, from the resume outline, or empty")
+
+
+class ChatTurn(BaseModel):
+    """What the model decided a message from the person means, and what to do about it."""
+
+    reply: str = Field(default="", description="One or two plain sentences: what you did, or your one question")
+    skills: list[SkillAdd] = Field(default_factory=list, description="Skills the person says they have, to put on a Skills line")
+    ops: list[PlanOp] = Field(default_factory=list, description="Bullets to add to entries already on the resume")
+    projects: list[ProjectDraft] = Field(default_factory=list, description="Separate projects, not on the resume")
+    skipped: list[str] = Field(default_factory=list, description="Job skills the person says they haven't done or want to skip")
+    handled: list[str] = Field(default_factory=list, description="Job skills dealt with this turn: added, written up or skipped")
+    needs_more: bool = Field(default=False, description="True only if reply is a question you need answered")

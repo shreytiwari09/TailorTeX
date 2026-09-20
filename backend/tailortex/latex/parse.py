@@ -550,7 +550,10 @@ def _close_lists(s: str, start: int, end: int, limit: int, prof: Profile) -> int
     return end
 
 
-_VALUES_SIMPLE = re.compile(r"^(?:[^\\{}$]|\\[&%#_$ ])*$")
+# A skills line is editable when it is plain text, escaped characters, and separators. `\\textbullet{}` is a
+# separator many resumes use between skills; the text layer already reads it as "•" and writes it back, so
+# a line that uses it can be edited like any other instead of being locked.
+_VALUES_SIMPLE = re.compile(r"^(?:[^\\{}$]|\\[&%#_$ ]|\\(?:textbullet|textperiodcentered)\{\})*$")
 
 
 def _find_skills_lines(s: str, region: Span, sec: Section) -> list[Block]:

@@ -356,7 +356,7 @@ def _check_text(
 
     if bl.kind == "skills":
         pool = resume_text + "\n" + all_evidence_text
-        items = [x.strip() for x in re.split(r",|;", plain) if x.strip()]
+        items = [x.strip() for x in re.split(r",|;|\u2022|\u00b7|\|", plain) if x.strip()]
         bad = [x for x in items if not contains_term(pool, x) and x.lower() not in pool.lower()]
         if bad:
             return "invented_term", (

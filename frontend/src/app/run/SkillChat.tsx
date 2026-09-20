@@ -1,32 +1,30 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Change, Evidence, GapGain, Inferred, Op } from '../../api'
 import { plain } from '../../util'
-import { acct, type AnswerResult, type ProjectSnippet } from '../client'
+import { acct, type ChatResult, type ProjectSnippet } from '../client'
 import { gainLabel } from '../format'
 import { Badge, Button, Card, Icon, InfoTip, Notice, TextArea } from '../ui'
 import { ProjectSnippetCard } from './ProjectSnippetCard'
 
-/** A drafted bullet the person has not yet added to their resume. */
+/** A change the assistant made from what the person said, waiting for them to add it to the resume. */
 export type Drafted = { op: Op; change: Change }
 
-type Msg = { id: number; from: 'assistant' | 'you'; body: ReactNode }
-
-const SKIP = /^\s*(no+|nope|nah|not really|never|skip|pass|n\/a|none|haven'?t|have not|i haven'?t|i have not|i don'?t( have| know)?|i didn'?t)\b/i
+type Msg = { id: number; from: 'assistant' | 'you'; text: string }
 
 /** **bold** in a message, and nothing else, so a message can't inject markup. */
 function say(text: string): ReactNode {
   return text.split('**').map((part, i) => (i % 2 ? <strong key={i} className="font-semibold">{part}</strong> : <Fragment key={i}>{part}</Fragment>))
 }
 
-const ask = (g: GapGain): string =>
-  `**${g.term}** (${g.must ? 'required' : 'nice to have'}): backing it is worth up to ${gainLabel(g.gain)} on your ATS score. Have you worked with it? Tell me what you built, what you used and what came of it. A sentence is enough. If you haven't, just say so and we'll move on.`
+const suggest = (g: GapGain, first = false): string =>
+  `${first ? '' : 'Next: '}**${g.term}** (${g.must ? 'required' : 'nice to have'}, worth up to ${gainLabel(g.gain)} on your ATS score). Do you have it? Tell me in your own words: that you know it, something you built with it, or that you'd rather skip it.`
 
 /**
- * The skills the job asks for that nothing in the person's material shows, as a conversation.
+ * A conversation about the skills the job asks for that nothing in the person's material shows.
  *
- * One skill at a time, most valuable first. Whatever the person replies is kept as permanent context and
- * turned into what it should become: a bullet on a job or project they already have, or code for a
- * separate project. The server decides which, and the drafts are checked against the person's own words.
+ * The assistant only proposes the next skill. Whatever the person types goes to it as it is, and it works out
+ * what they mean and does it: put a skill on their Skills line, write up work they did, start a new project,
+ * skip, or answer a question. There is no script here, and nothing decides what a message means on this side.
  */
 export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasModel, engine, filename, onDrafted, onAccept, onDiscard, onStored }: {
   runId: string
@@ -37,81 +35,79 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
   hasModel: boolean
   engine: string
   filename: string
-  onDrafted: (r: AnswerResult) => void
+  onDrafted: (r: Pick<ChatResult, 'ops' | 'changes'>) => void
   onAccept: (d: Drafted) => void
   onDiscard: (d: Drafted) => void
   onStored: (e: Evidence[]) => void
 }) {
   const [handled, setHandled] = useState<string[]>([])
-  const [pending, setPending] = useState('') // what they've said so far about the current skill
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [snippets, setSnippets] = useState<ProjectSnippet[]>([])
+  const [manual, setManual] = useState<{ term: string; latex: string }[]>([])
+  const [copied, setCopied] = useState<string | null>(null)
   const nextId = useRef(2)
   const [messages, setMessages] = useState<Msg[]>(() => {
     const first = gaps[0]
     return first
       ? [
-          { id: 0, from: 'assistant', body: say(`I couldn't find ${gaps.length === 1 ? 'a skill' : `${gaps.length} skills`} this job asks for anywhere in your resume or context. I'll ask about them one at a time, most valuable first. Answer in your own words, or skip any you haven't done. I'll only write what you tell me.`) },
-          { id: 1, from: 'assistant', body: say(ask(first)) },
+          { id: 0, from: 'assistant', text: `The job asks for ${gaps.length === 1 ? 'a skill' : `${gaps.length} skills`} I couldn't find in your resume or context. I'll suggest them one at a time, most valuable first, but you steer: tell me any skill you have, something you built, or say skip. I only write what you tell me.` },
+          { id: 1, from: 'assistant', text: suggest(first, true) },
         ]
       : []
   })
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [messages, drafted.length, snippets.length, busy])
+  }, [messages, drafted.length, snippets.length, manual.length, busy])
 
   const queue = gaps.filter((g) => !handled.includes(g.term))
   const current = queue[0] ?? null
   const total = gaps.length
 
-  const push = (from: Msg['from'], body: ReactNode) => setMessages((m) => [...m, { id: nextId.current++, from, body }])
-  const moveOn = (done: string) => {
-    const remaining = gaps.filter((g) => g.term !== done && !handled.includes(g.term))
-    setHandled((h) => [...h, done])
-    setPending('')
-    if (remaining[0]) push('assistant', say(ask(remaining[0])))
-    else push('assistant', say("That's every skill the job asks for that I couldn't find. Add anything else you know to **My context** and every later resume will use it."))
+  const push = (from: Msg['from'], text: string) => {
+    const id = nextId.current++
+    setMessages((m) => [...m, { id, from, text }])
+    return id
   }
 
   const submit = async (raw: string) => {
     const text = raw.trim()
-    if (!text || !current || busy) return
+    if (!text || busy) return
     setInput('')
+    const history = messages.map((m) => ({ role: m.from, text: m.text }))
     push('you', text)
-    if (!pending && SKIP.test(text)) {
-      push('assistant', say(`No problem, skipping **${current.term}**.`))
-      moveOn(current.term)
-      return
-    }
-    if (!pending && text.length < 12) {
-      push('assistant', say(`Could you say a bit more? What did you do with **${current.term}**, and what came of it?`))
-      return
-    }
-    const answer = pending ? `${pending}\n${text}` : text
     setBusy(true)
     try {
-      const r = await acct.answerRun(runId, [{ term: current.term, text: answer }], acceptedOps)
-      if (r.ops.length || r.projects.length) {
-        onStored(r.evidence)
-        onDrafted(r)
-        setSnippets((s) => [...s, ...r.projects])
-        const parts = [r.ops.length ? `${r.ops.length === 1 ? 'a bullet' : `${r.ops.length} bullets`} for your resume` : '', r.projects.length ? 'code for a new project to paste into Overleaf' : ''].filter(Boolean)
-        push('assistant', say(`Thanks, I've written ${parts.join(' and ')} from that. It only uses what you said, so please check it below. I've also saved what you told me to My context.`))
-        moveOn(current.term)
-      } else if (r.followups.length) {
-        setPending(answer)
-        push('assistant', say(r.followups[0].question))
-      } else {
-        setPending(answer)
-        const why = r.blocked[0]?.message
-        push('assistant', say(why ? `I couldn't write that without adding something you didn't say: ${why} Tell me a little more, or say skip.` : `I couldn't write a bullet from that yet. Tell me a little more about what you did, or say skip.`))
+      // what is waiting to be added counts too, so a second skill on the same line builds on the first
+      const r = await acct.chatRun(runId, text, history, current?.term ?? null, [...acceptedOps, ...drafted.map((d) => d.op)])
+      push('assistant', r.reply)
+      if (r.stored) onStored(r.evidence)
+      if (r.ops.length) onDrafted(r)
+      if (r.projects.length) setSnippets((s) => [...s, ...r.projects])
+      if (r.manual.length) setManual((m) => [...m, ...r.manual])
+      const done = [...new Set(r.handled)]
+      if (done.length) {
+        setHandled((h) => [...h, ...done.filter((t) => !h.includes(t))])
+        // the assistant only proposes the next skill once the last one is dealt with, never in the middle of a question
+        const next = gaps.find((g) => !handled.includes(g.term) && !done.some((d) => d.toLowerCase() === g.term.toLowerCase()))
+        if (next && !r.needs_more) push('assistant', suggest(next))
+        else if (!next) push('assistant', "That's every skill the job asked for that I couldn't find. You can still tell me anything else you'd like on your resume.")
       }
     } catch (e) {
-      push('assistant', say(e instanceof Error ? e.message : 'Something went wrong. Try again.'))
+      push('assistant', e instanceof Error ? e.message : 'Something went wrong. Try again.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const copy = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(code)
+      setTimeout(() => setCopied(null), 1800)
+    } catch {
+      /* the code is selectable, so it can still be copied by hand */
     }
   }
 
@@ -121,12 +117,12 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="flex items-center gap-2 font-headline-sm text-headline-sm text-on-surface">
-            Fill the gaps
+            Talk to your resume
             <InfoTip align="left">
-              The job asks for skills that aren't written anywhere in your resume or context. TailorTeX won't write something nobody told it, so it asks. If you've done any of these, say so in your own words. If you haven't, skip it: adding it wouldn't survive an interview.
+              The job asks for skills that aren't written anywhere in your resume or context. Tell the assistant what you know in your own words: that you have a skill (no project needed), something you built, or that you want to skip it. It works out what you mean and does it. It only uses what you say.
             </InfoTip>
           </h2>
-          <p className="mt-0.5 font-body-sm text-body-sm text-on-surface-variant">Answer in your own words. Your answers become part of your context.</p>
+          <p className="mt-0.5 font-body-sm text-body-sm text-on-surface-variant">Say anything about your skills. What you tell it becomes part of your context.</p>
         </div>
         {total > 0 && <Badge tone="accent">{Math.min(handled.length + 1, total)} of {total}</Badge>}
       </div>
@@ -146,25 +142,34 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
         </div>
       )}
 
-      {!hasModel && total > 0 && <Notice tone="warn">Add a model key in Settings first: writing from your answers needs one.</Notice>}
+      {!hasModel && total > 0 && <Notice tone="warn">Add a model key in Settings first: the assistant needs one to understand you.</Notice>}
 
       {total > 0 && (
-        <div className="flex max-h-[520px] flex-col gap-2.5 overflow-y-auto rounded-xl bg-surface-container-lowest p-1" aria-live="polite">
+        <div className="flex max-h-[560px] flex-col gap-2.5 overflow-y-auto rounded-xl bg-surface-container-lowest p-1" aria-live="polite">
           {messages.map((m) => (
-            <div key={m.id} className={`max-w-[92%] rounded-2xl px-3.5 py-2.5 font-body-md text-body-md leading-relaxed ${m.from === 'assistant' ? 'self-start rounded-tl-sm bg-surface-container-low text-on-surface' : 'self-end rounded-tr-sm bg-primary text-on-primary'}`}>
-              {m.body}
+            <div key={m.id} className={`max-w-[92%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 font-body-md text-body-md leading-relaxed ${m.from === 'assistant' ? 'self-start rounded-tl-sm bg-surface-container-low text-on-surface' : 'self-end rounded-tr-sm bg-primary text-on-primary'}`}>
+              {m.from === 'assistant' ? say(m.text) : m.text}
             </div>
           ))}
-          {busy && <div className="self-start rounded-2xl rounded-tl-sm bg-surface-container-low px-3.5 py-2.5 font-body-md text-body-md text-on-surface-variant"><Icon name="progress_activity" className="animate-spin text-[16px]" /> Writing…</div>}
+          {busy && <div className="self-start rounded-2xl rounded-tl-sm bg-surface-container-low px-3.5 py-2.5 font-body-md text-body-md text-on-surface-variant"><Icon name="progress_activity" className="animate-spin text-[16px]" /> Thinking…</div>}
 
+          {manual.map((m) => (
+            <div key={m.term} className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+              <p className="font-body-md text-body-md text-on-surface">Add <strong>{m.term}</strong> to your Skills section in Overleaf, in the same style as the others:</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 rounded-lg bg-surface-container-low px-3 py-2 font-code-sm text-code-sm text-on-surface">{m.latex}</code>
+                <Button size="sm" variant="secondary" onClick={() => void copy(m.latex)}><Icon name={copied === m.latex ? 'check' : 'content_copy'} className="text-[16px]" /> {copied === m.latex ? 'Copied' : 'Copy'}</Button>
+              </div>
+            </div>
+          ))}
           {snippets.map((sn) => (
             <ProjectSnippetCard key={sn.answer} snippet={sn} engine={engine} filename={filename} onDismiss={() => setSnippets((l) => l.filter((x) => x !== sn))} />
           ))}
           {drafted.map((d) => (
-            <div key={d.change.id} className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+            <div key={`${d.change.id}-${d.op.target}-${d.op.text}`} className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone="good">New bullet</Badge>
-                <span className="font-code-sm text-code-sm text-on-surface-variant">{[d.change.section, d.change.heading].filter(Boolean).join(' › ')}</span>
+                <Badge tone="good">{d.op.op === 'add' ? 'New bullet' : 'Skills updated'}</Badge>
+                <span className="font-code-sm text-code-sm text-on-surface-variant">{[d.change.section, d.change.heading || d.change.target].filter(Boolean).join(' › ')}</span>
                 {(d.change.gain ?? 0) > 0 && <span className="ml-auto rounded bg-emerald-100 px-1.5 py-0.5 font-code-sm text-[11px] font-semibold text-emerald-800">{gainLabel(d.change.gain ?? 0)} ATS</span>}
               </div>
               <p className="font-body-md text-body-md leading-relaxed text-on-surface">{plain(d.change.after)}</p>
@@ -178,7 +183,7 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
         </div>
       )}
 
-      {current && (
+      {total > 0 && (
         <form
           className="flex flex-col gap-2"
           onSubmit={(e) => {
@@ -197,12 +202,12 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
               }
             }}
             disabled={!hasModel || busy}
-            aria-label={`Your answer about ${current.term}`}
-            placeholder={`About ${current.term}: what you built, what you used, what came of it…`}
+            aria-label="Tell the assistant about your skills"
+            placeholder={current ? `Tell me about ${current.term}, or anything else you'd like on your resume…` : 'Anything else you would like on your resume…'}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" loading={busy} disabled={!input.trim() || !hasModel}><Icon name="send" className="text-[17px]" /> Send</Button>
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => void submit("I haven't done this")}>Skip {current.term}</Button>
+            {current && <Button type="button" variant="ghost" disabled={busy || !hasModel} onClick={() => void submit(`skip ${current.term}`)}>Skip {current.term}</Button>}
             <span className="font-body-sm text-body-sm text-on-surface-variant">Enter to send, Shift+Enter for a new line</span>
           </div>
         </form>

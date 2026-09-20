@@ -7,6 +7,7 @@ DATABASE_URL; without it these routes answer 503 and the guest flow keeps workin
 from __future__ import annotations
 
 import base64
+from typing import Literal
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -29,7 +30,7 @@ from ..llm.providers import PROVIDERS, detect_provider
 from ..ops import Op
 from ..evidence.answers import answer_to_evidence, next_answer_number
 from ..ats.gain import ats_score
-from ..pipeline.tailor import TailorInput, answer_gaps, rebuild
+from ..pipeline.tailor import TailorInput, answer_gaps, chat_turn, rebuild
 from ..types import Answer, EvidenceItem, JobAnalysis
 from . import main as core
 
@@ -444,6 +445,18 @@ class RunRebuildIn(BaseModel):
     compile: bool = True
 
 
+class ChatMsg(BaseModel):
+    role: Literal["you", "assistant"]
+    text: str = Field(max_length=1500)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[ChatMsg] = Field(default_factory=list, max_length=12)
+    focus: str | None = Field(default=None, max_length=80)  # the skill the assistant last asked about
+    ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
+
+
 class AnswersIn(BaseModel):
     answers: list[Answer] = Field(min_length=1, max_length=6)
     ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
@@ -565,6 +578,37 @@ async def answer_run(run_id: str, body: AnswersIn, request: Request, profile: Pr
         out["evidence"] = []
         out["stored"] = False
     out["usage"] = {"model": llm.model, "calls": llm.usage.calls}
+    return out
+
+
+@router.post("/runs/{run_id}/chat")
+async def chat_run(run_id: str, body: ChatIn, request: Request, profile: Profile = Depends(current), db: AsyncSession = Depends(db_session)):
+    """Say anything about the skills a job wants and the assistant works out what you mean and does it:
+    add a skill to your Skills, write up work you did, start a new project, or skip.
+
+    Kept as context only when it produced something, so a half-finished exchange leaves nothing behind.
+    """
+    core.rate_limit(request, "tailor")
+    run = await repo.own_run(db, profile, run_id)
+    if run is None:
+        raise HTTPException(404, "No such resume.")
+    llm = llm_for(profile)
+    await core.ensure_model(llm)
+    context = await repo.list_context(db, profile)
+    analysis = JobAnalysis.model_validate(run.result.get("analysis") or {})
+    unbacked = [g["term"] for g in (run.result.get("gains") or {}).get("gaps", [])]
+    out = await chat_turn(run.source_tex, analysis, _run_evidence(profile, context, run), body.message, [m.model_dump() for m in body.history],
+                          body.focus, unbacked, body.ops, llm, current_tex=run.tex, page_limit=run.result.get("page_limit"))
+    if out["stored"]:
+        items = [EvidenceItem.model_validate(e) for e in out["evidence"]]
+        saved = await repo.add_source(db, profile, "fact", items)
+        if [e.id for e in saved] != [e.id for e in items]:
+            raise HTTPException(409, "Your context changed while this was being written. Please try again.")
+        out["evidence"] = [e.model_dump() for e in saved]
+    if out["skills_confirmed"]:
+        # a skill they state joins "Skills you can defend", where My context shows it and every later resume can use it
+        have = list(profile.skills or [])
+        profile.skills = [*have, *[t for t in out["skills_confirmed"] if not any(t.lower() == h.lower() for h in have)]][:200]
     return out
 
 

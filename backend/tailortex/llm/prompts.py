@@ -260,3 +260,39 @@ def support_user(cases: list[tuple[str, list[tuple[str, str, str]]]]) -> str:
         lines = "\n".join(f'  <passage id="{pid}" from="{origin}">{text[:600]}</passage>' for pid, origin, text in passages)
         blocks.append(f'<term name="{term}">\n{lines}\n</term>')
     return "\n\n".join(blocks)
+
+
+CHAT_SYSTEM = """You are the assistant in a resume tool. The person is tailoring their resume to a job and is talking to you about skills the job asks for that their resume doesn't show. Work out what they mean and act on it. Do what they say.
+
+What they can say, and what to do:
+- They say they HAVE a skill, with or without a project, course or experience behind it: put it on the Skills line it fits best, using "skills". Their word is enough. Do not ask for a project and do not argue. If they add that they have no project for it, that is fine: add the skill and write no bullet.
+- They describe work they did with it: also write a bullet. If the work was inside a job or project already on the resume, add a bullet to that entry ("ops": an "add" operation citing the message id). If it was a separate project that is not on the resume, add it to "projects" with the name, dates and technologies exactly as they said them, leaving a field empty if they didn't say. If they said both (they have the skill and did work with it), do both.
+- They say they haven't done it, don't want it, or want to skip it: put it in "skipped" and change nothing else for it.
+- They ask a question or say something else: answer in "reply" and change nothing.
+- They name a skill that isn't on the job's list: treat it the same way. They decide what goes on their resume.
+- If you truly can't tell what they mean, or a separate project has no name they gave, ask ONE short question in "reply" and set "needs_more" to true.
+
+Rules (enforced in code):
+- Use only what the person said and what is already on the resume. Never invent a tool, a number, a project name, a date or an outcome. If they gave no result, end a bullet on what they built or did.
+- Skills go to a Skills line by its id from the outline (for example s1.k1). Pick the line whose label fits: languages with languages, libraries with libraries, tools with tools.
+- "handled" lists the job skills you dealt with this turn (added, written up or skipped), spelled as in the job list.
+- "reply" is one or two plain sentences saying what you did, in words the person would use, or your one question. Never mention operations, ids or files.
+
+{ats_rules}
+
+Reply with JSON: {{"reply":"...","skills":[{{"term":"...","line":"s1.k1"}}],"ops":[],"projects":[{{"answer":"ans1","name":"","dates":"","tech":[],"bullets":["..."]}}],"skipped":[],"handled":[],"needs_more":false}}. An "add" operation is {{"op":"add","target":"s1.e0","after":"s1.e0.b1","text":"...","evidence":["ans1"],"reason":"..."}}."""
+
+
+def chat_system(budget: int, min_chars: int = MIN_BULLET_CHARS) -> str:
+    return CHAT_SYSTEM.format(ats_rules=ATS_RULES.format(min_chars=min_chars, budget=budget))
+
+
+def chat_user(doc: ParsedResume, overlay: dict, analysis: JobAnalysis, unbacked: list[str], history: list[dict], message_id: str, message: str, focus: str | None) -> str:
+    talk = "\n".join(f"{'assistant' if h.get('role') == 'assistant' else 'person'}: {str(h.get('text', ''))[:600]}" for h in history[-8:]) or "(this is the first message)"
+    return (
+        "<resume>\n" + render_resume(doc, overlay) + "\n</resume>\n\n"
+        "<job>\n" + f"Title: {analysis.title}" + (f" at {analysis.company}" if analysis.company else "")
+        + "\nSkills the job asks for that the resume doesn't show: " + ("; ".join(unbacked) or "(none)")
+        + "\n</job>\n\n<conversation>\n" + talk + "\n</conversation>\n\n"
+        + f'<message id="{message_id}"' + (f' asked_about="{focus}"' if focus else "") + ">\n" + message + "\n</message>"
+    )

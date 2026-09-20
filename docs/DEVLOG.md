@@ -587,6 +587,49 @@ invented result. Tests now assert neither prompt asks for an unstated outcome.
 **What this does not settle:** four replies is a smoke test, not an evaluation, and the validator still can't
 catch a vague overclaim. That is why every drafted bullet is shown for the person to accept before it goes in.
 
+## 29. "I said add it to my skills and it didn't"
+
+**Reported by the user:** "What's happening in the chat? I told it to add a skill and it still wasn't doing it. Maybe I have
+a skill but not a project for it. The system should be intelligent, not hardcoded: do what the user says."
+
+Two separate causes, one visible and one not.
+
+**1. The tool couldn't edit their Skills section at all.** All four of the user's Skills lines were *locked* ("uses LaTeX
+formatting inside the list"). Their resume separates skills with `\textbullet{}`. The text layer already converts
+`\textbullet{}` to a bullet and back in both directions, but a strict check treated any `{}` as formatting and locked the
+line. So there was nothing the tool was allowed to change, whatever the person said, and the chat never said so. A
+line that uses `\textbullet{}` or `\textperiodcentered{}` as a separator is now editable, and an edit keeps the line's own
+separator (a bulleted line stays bulleted, a comma line stays comma). Checked on the user's resume: an edit round-trips as
+`\textbullet{} PyTorch`, compiles, stays at one page. Where a line genuinely can't be edited, the assistant now says so
+and gives the exact code to paste, instead of silently doing nothing.
+
+**2. The chat was a script.** Regexes on the client decided whether a message meant "skip", a length rule decided whether it
+was too short, and the server insisted on a project name. So "I know PyTorch but I don't have a project for it" matched
+"I don't have" and was skipped. Both are gone. Every message now goes to the assistant with the conversation so far and the
+list of skills the job wants, and it decides what the person means:
+
+- *they have a skill* (with or without a project) → put it on the Skills line it fits; **no project is asked for**;
+- *they describe work* → a bullet on an existing entry, or code for a separate project; both if they said both;
+- *they haven't done it or want to skip* → skipped, nothing changed;
+- *a question or a remark* → answered, nothing changed, and it doesn't count as dealing with the skill;
+- *a skill the job never listed* → treated the same: they decide what goes on their resume.
+
+The assistant only proposes the next skill. It is not asked in the middle of a question, and the person can steer anywhere.
+
+**What stays in code, deliberately.** The model decides what a message means; code does it and checks it. A skill edit is built
+in code, not left to the model, so the line keeps its separator and nothing else on it changes. A skill the person's own words
+don't contain is refused *on its own*: an added "Kubernetes" doesn't cost them the "PyTorch" they did name. A skill they state
+is theirs to state, so it joins **Skills you can defend** (where My context shows it) and not a "fact" entry: an early version
+stored "add tensorflow in skills" as a fact, which every later resume would have read as evidence they *used* TensorFlow.
+
+**Bugs the tests and the browser found:** a question marked Statistics "handled", which would have stopped the chat asking about
+it; and two skills added one after the other both rewrote the same line, so applying both dropped the second silently. Pending
+edits to one line now merge into a single cumulative card, and only the latest version of a line counts.
+
+**Against the real model** (Gemini, the user's own resume, nothing saved): "add tensorflow in skills" added it to Frameworks &
+Libraries in their style; "I know PyTorch but I dont have any project for it" added it and asked for no project; "no I haven't
+used scikit-learn" skipped it; "why do you keep asking about statistics?" got a real answer and changed nothing.
+
 ## Test status
 
-216 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+233 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

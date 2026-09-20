@@ -723,3 +723,43 @@ def test_a_reply_that_produced_nothing_is_not_kept_so_no_half_answers_pile_up(cl
     second = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": text}]}).json()
     assert second["stored"] is True and second["evidence"][0]["id"] == "ans1"  # the first number, not ans2
     assert [e["id"] for e in client.get("/api/profile/context").json()["entries"] if e["id"].startswith("ans")] == ["ans1"]
+
+
+@needs_db
+def test_telling_the_chat_you_have_a_skill_puts_it_on_the_resume_and_in_your_confirmed_skills(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.chat = [{"reply": "Added PyTorch to your skills.", "skills": [{"term": "PyTorch", "line": ""}], "handled": ["PyTorch"]}]
+    r = client.post(f"/api/runs/{run_id}/chat", json={"message": "I know PyTorch but I don't have a project for it", "focus": "PyTorch"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    [op] = body["ops"]
+    assert op["op"] == "rewrite" and "PyTorch" in op["text"] and op["evidence"] == ["skills"] and body["handled"] == ["PyTorch"]
+
+    # kept as a skill they can defend, not as a "fact" entry that reads like an instruction
+    ctx = client.get("/api/profile/context").json()
+    assert "PyTorch" in ctx["skills"] and not [e for e in ctx["entries"] if e["id"].startswith("ans")]
+
+    # applying it is the ordinary rebuild, and it validates because the skill is now confirmed
+    done = client.post(f"/api/runs/{run_id}/rebuild", json={"ops": body["ops"], "compile": False}).json()
+    assert "PyTorch" in done["tex"] and not done["warnings"]
+    assert next(k for k in client.get(f"/api/runs/{run_id}").json()["keywords"] if k["term"] == "PyTorch")["after"] in ("listed", "context")
+    # saying it again doesn't add it twice
+    again = client.post(f"/api/runs/{run_id}/chat", json={"message": "add PyTorch", "ops": body["ops"]}).json()
+    assert client.get("/api/profile/context").json()["skills"].count("PyTorch") == 1
+
+
+@needs_db
+def test_the_chat_keeps_work_you_describe_as_context_but_not_a_bare_no(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.chat = [{"reply": "Okay, skipping it.", "skipped": ["PyTorch"], "handled": ["PyTorch"]}]
+    no = client.post(f"/api/runs/{run_id}/chat", json={"message": "no I haven't", "focus": "PyTorch"}).json()
+    assert no["skipped"] == ["PyTorch"] and no["stored"] is False
+    assert not client.get("/api/profile/context").json()["entries"] or all(not e["id"].startswith("ans") for e in client.get("/api/profile/context").json()["entries"])
+
+    bullet = {"op": "add", "target": "s1.e0", "after": "s1.e0.b1", "evidence": ["ans1"], "reason": "x",
+              "text": "Trained a PyTorch model that flags fraudulent transfers, cutting manual review time by 30%"}
+    llm.chat, llm.chat_calls = [{"reply": "Written.", "ops": [bullet], "handled": ["PyTorch"]}], 0
+    said = "At Finch Payments I trained a PyTorch model that flags fraudulent transfers and cut manual review time by 30%"
+    yes = client.post(f"/api/runs/{run_id}/chat", json={"message": said}).json()
+    assert yes["stored"] is True and yes["evidence"][0]["id"] == "ans1"
+    assert next(e for e in client.get("/api/profile/context").json()["entries"] if e["id"] == "ans1")["text"] == said

@@ -28,13 +28,14 @@ from ..ats.terms import contains_term, count_term, same_term
 from ..compile.compile import CompileResult, UnsafeLatexError, compile_async, detect_engine, tex_available
 from ..latex.apply import ApplyError, apply_ops
 from ..latex.parse import ParsedResume, parse_resume
+from ..latex.text import plain_to_latex
 from ..latex.snippet import MAX_BULLETS, insert_project, project_block, project_style
 from ..learn.arms import ARMS
 from ..learn.bandit import Bandit, context_key
 from ..learn.style import StyleMemory
 from ..llm.client import LLMClient, LLMError
-from ..llm.prompts import ANALYZE_SYSTEM, analyze_user, draft_system, draft_user, plan_system, plan_user, retry_user
-from ..llm.schemas import Draft, Plan
+from ..llm.prompts import ANALYZE_SYSTEM, analyze_user, chat_system, chat_user, draft_system, draft_user, plan_system, plan_user, retry_user
+from ..llm.schemas import ChatTurn, Draft, Plan
 from ..ops import Op
 from ..reward.reward import RewardInput, reward
 from ..evidence.answers import answer_to_evidence, next_answer_number
@@ -213,13 +214,28 @@ async def _repair_original(tex: str) -> tuple[str, CompileResult, str] | None:
     return None
 
 
+_SKILL_SPLIT = re.compile(r"\s*(?:,|;|\u2022|\u00b7|\|)\s*")
+
+
+def skill_items(text: str) -> list[str]:
+    return [x.strip() for x in _SKILL_SPLIT.split(text.replace("**", "")) if x.strip()]
+
+
+def skill_separator(original: str) -> str:
+    """How this skills line separates its items: the resume's own style, not the model's."""
+    return " \u2022 " if "\u2022" in original else " \u00b7 " if "\u00b7" in original else ", "
+
+
 def normalize_ops(doc: ParsedResume, ops: list[Op]) -> list[Op]:
-    """Small, safe fixes to model output: a skills line's text shouldn't repeat its label."""
+    """Small, safe fixes to model output: a skills line's text shouldn't repeat its label, and it keeps the
+    separator the line was written with (a bulleted line stays bulleted)."""
     for op in ops:
         if op.op == "rewrite" and op.text:
             b = doc.block(op.target)
-            if b and b.kind == "skills" and b.label:
-                op.text = re.sub(r"^\s*\**\s*" + re.escape(b.label) + r"\s*\**\s*:\s*\**\s*", "", op.text, flags=re.IGNORECASE)
+            if b and b.kind == "skills":
+                if b.label:
+                    op.text = re.sub(r"^\s*\**\s*" + re.escape(b.label) + r"\s*\**\s*:\s*\**\s*", "", op.text, flags=re.IGNORECASE)
+                op.text = skill_separator(b.text).join(skill_items(op.text))
     return ops
 
 
@@ -793,4 +809,126 @@ async def _project_snippet(doc: ParsedResume, analysis: JobAnalysis, answer: Ans
         "ats_before": ats_score(before.to_dict()),
         "ats_after": ats_score(after.to_dict()),
         "terms": gained,
+    }
+
+
+
+def _skill_ops(doc: ParsedResume, accepted: list[Op], adds, item: EvidenceItem) -> tuple[list[Op], list[str], list[dict], list[dict]]:
+    """Put the skills a person says they have onto a Skills line.
+
+    Built here rather than left to the model, so the line keeps its own separator and nothing else on it
+    changes. A skill the person's own words don't contain is refused on its own, so one stray addition doesn't
+    cost them the skills they did name. Returns (operations, things to tell the person, skills that couldn't be
+    placed, skills refused).
+    """
+    editable = [b for sec in doc.sections if sec.kind == "skills" for b in sec.blocks if not b.locked]
+    rewritten = {o.target: o.text for o in accepted if o.op == "rewrite" and o.text}
+    resume_text = doc.plain_text()
+    pending: dict[str, list[str]] = {}
+    notes: list[str] = []
+    manual: list[dict] = []
+    refused: list[dict] = []
+    for a in adds:
+        term = a.term.strip()
+        if not term:
+            continue
+        if not (contains_term(item.text, term) or _said(item.text, term)):
+            refused.append({"op": f"skill {term}", "rule": "invented_term", "message": f"'{term}' isn't in what you told me, so I didn't add it.", "text": term})
+            continue
+        already = contains_term(resume_text, term) or any(contains_term(t, term) for t in rewritten.values()) or any(
+            same_term(term, x) for ts in pending.values() for x in ts)
+        if already:
+            notes.append(f"{term} is already on your resume")
+            continue
+        if not editable:
+            manual.append({"term": term, "latex": "\\textbullet{} " + plain_to_latex(term)})
+            continue
+        block = next((b for b in editable if b.id == a.line), None) or editable[0]
+        pending.setdefault(block.id, []).append(term)
+    ops = []
+    for bid, terms in pending.items():
+        block = doc.block(bid)
+        base = rewritten.get(bid, block.text)
+        items = skill_items(base) + terms
+        ops.append(Op(op="rewrite", target=bid, text=skill_separator(block.text).join(items), evidence=["skills"],
+                      reason=f"You told us you have {', '.join(terms)}.", source="model"))
+        notes.append(f"added {', '.join(terms)} to {block.label or 'your skills'}")
+    return ops, notes, manual, refused
+
+
+async def chat_turn(
+    source_tex: str, analysis: JobAnalysis, evidence: list[EvidenceItem], message: str, history: list[dict], focus: str | None,
+    unbacked: list[str], accepted: list[Op], llm: LLMClient, current_tex: str | None = None, page_limit: int | None = None,
+) -> dict:
+    """Understand what the person said and do it.
+
+    The model decides what a message means: that they have a skill, that they did work with it, that they
+    haven't, or that they're asking something. Code then does it and checks it. The person's own words are the
+    evidence, so nothing here can use a tool, number, name or outcome they didn't say.
+    """
+    doc = parse_resume(source_tex)
+    thread = "\n".join([str(h.get("text", "")) for h in history if h.get("role") == "you"][-6:] + [message]).strip()
+    item = answer_to_evidence(focus or "what you told us", thread, next_answer_number([e.id for e in evidence]))
+    all_evidence = [*evidence, item]
+    overlay = _accepted_overlay(doc, accepted)
+
+    turn = await llm.complete(chat_system(doc.bullet_budget), chat_user(doc, overlay, analysis, unbacked, history, item.id, message, focus), ChatTurn)
+
+    skill_ops, notes, manual, refused = _skill_ops(doc, accepted, turn.skills, item)
+    stated = [t for o in skill_ops for t in skill_items(o.text or "") if any(same_term(t, a.term) for a in turn.skills)]
+    if stated:
+        # what the person says they can do is theirs to say: it joins the skills they've confirmed
+        known = next((e for e in all_evidence if e.id == "skills"), None)
+        confirmed = EvidenceItem(id="skills", source="skill", title="Skills the candidate can defend in an interview", skills=[*(known.skills if known else []), *stated])
+        all_evidence = [e for e in all_evidence if e.id != "skills"] + [confirmed]
+    bullet_ops = normalize_ops(doc, [p.to_op() for p in turn.ops if p.op == "add"])
+    checked = validate_ops([*skill_ops, *bullet_ops], ValidationContext(doc=doc, evidence=all_evidence, analysis=analysis))
+    blocked = [*refused, *({"op": v.op.describe(), "rule": v.rule, "message": v.message, "text": v.op.text} for v in checked.violations)]
+
+    # a separate project has no entry to borrow from: only what the person said counts
+    stub = Answer(term=focus or (turn.handled[0] if turn.handled else "skill"), text=thread)
+    snippets, asked = [], ""
+    for pd in turn.projects:
+        if pd.answer != item.id:
+            continue
+        info = _project_from_reply(stub, item, pd)
+        if info is None:
+            asked = "What is the project called, and roughly when did you do it?"
+            continue
+        source = "\n".join([item.text, info.name, ", ".join(info.tech), info.dates])
+        good = [b for b in pd.bullets[:8] if check_standalone_bullet(b, source, doc.bullet_budget) is None]
+        for b in pd.bullets[:8]:
+            problem = check_standalone_bullet(b, source, doc.bullet_budget)
+            if problem:
+                blocked.append({"op": f"project {info.name}", "rule": problem[0], "message": problem[1], "text": b})
+        if good:
+            snippets.append(await _project_snippet(doc, analysis, stub, item, good, current_tex or source_tex, page_limit, info))
+
+    valid = checked.valid
+    match = lambda names: [next((u for u in unbacked if same_term(u, n)), n) for n in names]  # noqa: E731
+    handled = match([*turn.handled, *(s.term for s in turn.skills), *turn.skipped])
+    narrative = any(o.op == "add" for o in valid) or bool(snippets)  # work they described, worth keeping as context
+    produced = bool(valid or snippets)
+    if not (produced or turn.skipped or notes):
+        handled = []  # a question or a remark changes nothing, so nothing is done with any skill
+    reply = turn.reply.strip()
+    if manual:
+        names = ", ".join(m["term"] for m in manual)
+        reply = (reply + " " if reply else "") + f"I couldn't edit your Skills lines automatically. Add {names} to your Skills section in Overleaf; the code is below."
+    if asked and not reply:
+        reply = asked
+    return {
+        "reply": reply or ("Done." if produced else "Tell me a little more about what you'd like on your resume."),
+        "ops": [o.model_dump() for o in valid],
+        "changes": describe_changes(doc, valid, analysis),
+        "projects": snippets,
+        "manual": manual,
+        "blocked": blocked,
+        "skipped": match(turn.skipped),
+        "handled": list(dict.fromkeys(handled)) if not (asked or turn.needs_more) else [],
+        "needs_more": bool(turn.needs_more or asked),
+        "notes": notes,
+        "stored": narrative,
+        "evidence": [item.model_dump()] if narrative else [],
+        "skills_confirmed": list(dict.fromkeys(t for o in valid if o.op == "rewrite" for t in skill_items(o.text or "") if any(same_term(t, a.term) for a in turn.skills))),
     }

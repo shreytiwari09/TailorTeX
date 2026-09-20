@@ -57,6 +57,21 @@ export type RunSummary = {
 }
 export type SavedRun = Result & { saved_run_id: string; jd: string; accepted_ops?: Op[] }
 export type ProjectInfo = { name: string; dates: string; tech: string[] }
+export type ChatResult = {
+  reply: string
+  ops: Op[]
+  changes: Change[]
+  projects: ProjectSnippet[]
+  manual: { term: string; latex: string }[]
+  blocked: { rule: string; message: string; text: string | null; op: string }[]
+  skipped: string[]
+  handled: string[]
+  needs_more: boolean
+  notes: string[]
+  stored: boolean
+  evidence: Evidence[]
+  skills_confirmed: string[]
+}
 export type AnswerIn = { term: string; text: string; target?: string | null; project?: ProjectInfo | null }
 export type ProjectSnippet = {
   answer: string
@@ -119,6 +134,7 @@ export const acct = {
   runs: () => req<{ runs: RunSummary[] }>('GET', '/api/runs'),
   run: (id: string) => req<SavedRun>('GET', `/api/runs/${id}`),
   rebuildRun: (id: string, ops: unknown[], compile = true) => req<{ tex: string; pdf: string | null; after: Result['after']; warnings: string[]; ats?: number }>('POST', `/api/runs/${id}/rebuild`, { ops, compile }),
+  chatRun: (id: string, message: string, history: { role: 'you' | 'assistant'; text: string }[], focus: string | null, ops: Op[]) => req<ChatResult>('POST', `/api/runs/${id}/chat`, { message, history, focus, ops }),
   answerRun: (id: string, answers: AnswerIn[], ops: Op[]) => req<AnswerResult>('POST', `/api/runs/${id}/answers`, { answers, ops }),
   deleteRun: (id: string) => req<{ deleted: boolean }>('DELETE', `/api/runs/${id}`),
 }
