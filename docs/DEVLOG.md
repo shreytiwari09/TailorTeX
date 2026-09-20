@@ -238,6 +238,16 @@ quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier    retryDelay: 38s
 
 **The duplicate warning is gone.** The compile failure was printed twice, once in the summary and once as its own banner.
 
+## 19. "Why isn't it near 100% ATS?"
+
+**Asked by the user** of a run that scored 58% on must-have keywords. The answer was in the run's own data: the job (Generative AI Engineer) lists nine must-haves, and four of them — TensorFlow, PyTorch, Scikit-Learn, Statistics — appear nowhere in the resume, the notes, the LinkedIn text or any of the three public repositories. The model proposed adding "Generative AI" to the skills line and the validator refused it for the same reason.
+
+So 58% was the tool working: **the honest ceiling for that pairing is about 56%**, and the only ways up are real ones — use a keyword in a bullet instead of only listing it (a listed-only term scores 60%), or add evidence for something you can actually defend.
+
+That was invisible on the page, which showed a number and left the person to guess. The result now says it in the summary: "4 of the 9 must-have keywords (TensorFlow, PyTorch, Scikit-Learn, Statistics) are nowhere in your resume or your context, so they were left out instead of invented. Everything you can actually back is already in: 56% is the most this job can score until you add proof of those." Terms that are only in the skills list are named too, since moving them into a bullet is free points.
+
+**A score near 100% on a job you don't match is the failure mode**, not the goal: it means the resume claims things that fall apart in the interview. Saying so on the page is better than letting the number look like a bug.
+
 ## Test status
 
 124 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

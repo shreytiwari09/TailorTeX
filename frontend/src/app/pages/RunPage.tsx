@@ -240,6 +240,12 @@ function Summary({ run, view, recs, onTab, compileWarning }: { run: SavedRun; vi
   const compiled = view.after.pages !== null
   const high = recs.filter((r) => r.priority === 'high').length
 
+  // Why the score isn't higher: what was asked for that nothing backs. This is the honest ceiling.
+  const mustList = run.keywords.filter((k) => k.must)
+  const unproven = mustList.filter((k) => k.after === 'missing' && k.evidence_ids.length === 0)
+  const listedOnly = mustList.filter((k) => k.after === 'listed')
+  const ceiling = mustList.length ? (mustList.length - unproven.length) / mustList.length : 1
+
   const next = !compiled
     ? { text: `${compileWarning ?? "Your resume didn't compile, so there's no PDF."} Fix it in your LaTeX editor and tailor again; the tailored .tex below has the same problem.`, tab: null, label: null }
     : high
@@ -261,6 +267,17 @@ function Summary({ run, view, recs, onTab, compileWarning }: { run: SavedRun; vi
             : <>Must-have keyword coverage stayed at <strong>{pct(after)}</strong>.</>}
         {run.blocked.length > 0 && <> {run.blocked.length} further {run.blocked.length === 1 ? 'edit was' : 'edits were'} refused because nothing you have backs {run.blocked.length === 1 ? 'it' : 'them'}.</>}
       </p>
+      {unproven.length > 0 && (
+        <p className="border-t border-outline-variant/40 pt-3 font-body-md text-body-md leading-relaxed text-on-surface-variant">
+          <strong className="font-semibold text-on-surface">Why it isn't higher:</strong>{' '}
+          {unproven.length} of the {mustList.length} must-have {mustList.length === 1 ? 'keyword' : 'keywords'} (
+          {unproven.map((k) => k.term).join(', ')}) {unproven.length === 1 ? 'is' : 'are'} nowhere in your resume or your
+          context, so {unproven.length === 1 ? 'it was' : 'they were'} left out instead of invented. Everything you can
+          actually back is already in: <strong className="font-semibold text-on-surface">{pct(ceiling)}</strong> is the
+          most this job can score until you add proof of {unproven.length === 1 ? 'that one' : 'those'}.
+          {listedOnly.length > 0 && ` ${listedOnly.map((k) => k.term).join(', ')} ${listedOnly.length === 1 ? 'counts' : 'count'} only partly, because ${listedOnly.length === 1 ? "it's" : "they're"} in your Skills list and not used in a bullet.`}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-container-low px-3.5 py-2.5">
         <Icon name={compiled ? 'arrow_forward' : 'warning'} className={`text-[18px] ${compiled ? 'text-primary' : 'text-amber-600'}`} />
         <span className="font-body-md text-body-md text-on-surface">{next.text}</span>
