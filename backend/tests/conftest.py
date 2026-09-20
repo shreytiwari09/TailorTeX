@@ -1,7 +1,7 @@
 import pytest
 
 from tailortex.llm.client import Usage
-from tailortex.llm.schemas import Draft, Plan
+from tailortex.llm.schemas import Draft, Plan, SupportReply
 from tailortex.types import JobAnalysis
 
 
@@ -19,12 +19,17 @@ class MockLLM:
         self.plan_calls = 0
         self.usage = Usage()
         self.prompts: list[tuple[str, str]] = []
+        self.support: dict = {"terms": []}  # what it says when asked whether the material shows a skill
+        self.support_calls = 0
 
     async def complete(self, system, user, schema):
         self.usage.add(Usage(100, 50, 1))
         self.prompts.append((system, user))
         if schema is JobAnalysis:
             return JobAnalysis.model_validate(self.analysis)
+        if schema is SupportReply:
+            self.support_calls += 1
+            return SupportReply.model_validate(self.support)
         assert schema in (Plan, Draft)
         plan = self.plans[min(self.plan_calls, len(self.plans) - 1)]
         self.plan_calls += 1

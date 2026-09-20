@@ -346,6 +346,11 @@ def _check_text(
         if not _evidence_allowed_in(item, section_kind, bl.kind):
             where = "the summary or skills" if item.source == "skill" else "projects, activities, the summary or skills"
             return "evidence_scope", f"{eid} ({item.source}) can only support {where}, not a bullet in '{sec.title if sec else op.target}'."
+        if item.scope and bl.kind == "bullet" and bl.entry_id != item.scope:
+            return "evidence_scope", (
+                f"{eid} was found in {item.scope}, and a skill shown in one job or project can't be moved into another's bullets. "
+                f"Use it in {item.scope}, in the summary, or in the skills lines."
+            )
         cited.append(item)
     cited_text = "\n".join(e.full_text() for e in cited)
 

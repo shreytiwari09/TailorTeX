@@ -16,6 +16,9 @@ class EvidenceItem(BaseModel):
     text: str = ""
     skills: list[str] = Field(default_factory=list)
     url: str | None = None
+    # For something found in the resume itself: the entry it came from. A skill shown in one job can't be
+    # moved into another job's bullets, so such an item can only back bullets in that same entry.
+    scope: str | None = None
 
     def full_text(self) -> str:
         return " ".join(p for p in [self.title, self.text, ", ".join(self.skills)] if p)

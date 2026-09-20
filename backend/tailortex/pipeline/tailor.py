@@ -38,7 +38,9 @@ from ..llm.schemas import Draft, Plan
 from ..ops import Op
 from ..reward.reward import RewardInput, reward
 from ..evidence.answers import answer_to_evidence, next_answer_number
-from ..types import Answer, EvidenceItem, JobAnalysis
+from ..evidence.extract import known_skills
+from ..evidence.support import derive_evidence, find_support
+from ..types import Answer, EvidenceItem, JobAnalysis, ProjectInfo
 from ..validate.validate import ValidationContext, Violation, check_standalone_bullet, validate_ops
 
 Emit = Callable[[dict], Awaitable[None]]
@@ -532,6 +534,14 @@ async def tailor(
             await emit(_event("background", "done", message))
 
     gaps = gap_analysis(doc, analysis, inp.evidence)
+    # A skill can be shown in other words than the job uses. Ask the person's own material, by meaning,
+    # before calling it missing.
+    supports = await find_support(doc, analysis, gaps, inp.evidence, llm)
+    inferred_evidence = derive_evidence(supports)
+    if supports:
+        inp.evidence = [*inp.evidence, *inferred_evidence]
+        gaps = gap_analysis(doc, analysis, inp.evidence)
+        await emit(_event("gaps", "info", f"Found {len(supports)} skill{'s' if len(supports) != 1 else ''} your own material already shows: {', '.join(s.term for s in supports[:4])}"))
     counts = {k: sum(1 for g in gaps if g.status == k) for k in ("present", "evidence", "missing")}
     await emit(_event("gaps", "done", f"{counts['present']} already on your resume, {counts['evidence']} backed by your evidence, {counts['missing']} with no evidence (won't be added)", {"gaps": [g.to_dict() for g in gaps]}))
     before, before_cov = measure(doc, analysis, before_compiled)
@@ -558,6 +568,9 @@ async def tailor(
             warnings.append(f"One strategy failed: {r}")
     best = max(cands, key=lambda c: (c.reward, -len(c.violations)))
     result = build_result(run_id, doc, analysis, gaps, before, before_cov, best, cands, ctx, llm, page_limit, warnings, inp.evidence)
+    # What was found in their own material, for the page to show, and the evidence a rebuild needs to re-validate
+    result["inferred"] = [s.to_dict() for s in supports]
+    result["inferred_evidence"] = [e.model_dump() for e in inferred_evidence]
     await emit(_event("done", "done", f"Done. Must-have coverage {before.must_have:.0%} → {best.metrics.must_have:.0%}"))
     return result
 
@@ -613,6 +626,31 @@ def _accepted_overlay(doc: ParsedResume, accepted: list[Op]) -> dict[str, str | 
     return overlay
 
 
+def _said(text: str, phrase: str) -> bool:
+    """Whether the person's own words contain this phrase, ignoring case and spacing."""
+    flat = lambda x: re.sub(r"\s+", " ", x).strip().lower()  # noqa: E731
+    return bool(phrase.strip()) and flat(phrase) in flat(text)
+
+
+def _project_from_reply(answer: Answer, item: EvidenceItem, pd) -> ProjectInfo | None:
+    """The project a reply describes, using only what the reply says.
+
+    A project the person marked is used as given. One the model recognised in a plain reply keeps its name,
+    dates and technologies only if they appear in the reply's own words: a model that invents a tidy name
+    ("Fraud Detector") for something the person never named gets no project, and they are asked instead.
+    """
+    if answer.project is not None:
+        return answer.project
+    if answer.target:
+        return None
+    name = pd.name.strip()
+    if len(name) < 2 or not _said(item.text, name):
+        return None
+    dates = pd.dates.strip() if _said(item.text, pd.dates) else ""
+    tech = [t for t in pd.tech if _said(item.text, t)] or known_skills(item.text)[:8]
+    return ProjectInfo(name=name[:120], dates=dates[:40], tech=tech[:12])
+
+
 async def answer_gaps(
     source_tex: str,
     analysis: JobAnalysis,
@@ -663,20 +701,25 @@ async def answer_gaps(
 
         # bullets for separate projects have no entry to borrow from: only the person's own words count
         projects, rejected = {}, []
+        infos = {}
         for pd in draft.projects:
             pair = by_id.get(pd.answer)
-            if pair is None or pair[0].project is None:
+            if pair is None:
                 continue
             a, item = pair
-            source = "\n".join([item.text, a.project.name, ", ".join(a.project.tech), a.project.dates])
+            info = _project_from_reply(a, item, pd)
+            if info is None:
+                continue
+            infos[pd.answer] = info
+            source = "\n".join([item.text, info.name, ", ".join(info.tech), info.dates])
             good = []
             for b in pd.bullets[:8]:
                 problem = check_standalone_bullet(b, source, doc.bullet_budget)
                 if problem is None:
                     good.append(b)
                 else:
-                    rejected.append(f"Project '{a.project.name}': {problem[1]}")
-                    blocked.append({"attempt": attempt, "op": f"project {a.project.name}", "rule": problem[0], "message": problem[1], "text": b, "retried": attempt <= MAX_DRAFT_RETRIES})
+                    rejected.append(f"Project '{info.name}': {problem[1]}")
+                    blocked.append({"attempt": attempt, "op": f"project {info.name}", "rule": problem[0], "message": problem[1], "text": b, "retried": attempt <= MAX_DRAFT_RETRIES})
             if good:
                 projects[pd.answer] = good
 
@@ -690,12 +733,19 @@ async def answer_gaps(
     superseded = [o.target for o in valid if o.target in accepted_targets and o.op != "add"]
     changes = describe_changes(doc, valid, analysis)
 
-    snippets = [await _project_snippet(doc, analysis, by_id[aid][0], by_id[aid][1], bullets, current_tex or source_tex, page_limit)
+    # an answer that became a bullet on an entry isn't also a separate project
+    cited = {e for o in valid for e in o.evidence}
+    projects = {aid: b for aid, b in projects.items() if aid not in cited}
+    snippets = [await _project_snippet(doc, analysis, by_id[aid][0], by_id[aid][1], bullets, current_tex or source_tex, page_limit, infos[aid])
                 for aid, bullets in projects.items()]
     asked = {f["term"] for f in followups}
     for a, item in by_id.values():
-        if a.project and item.id not in projects and a.term not in asked:
-            followups.append({"term": a.term, "question": f"Tell us a bit more about {a.project.name}: what did you build, what did you use, and what came of it?"})
+        if item.id in projects or item.id in cited or a.term in asked:
+            continue
+        if a.project:
+            followups.append({"term": a.term, "question": f"Tell me a bit more about {a.project.name}: what did you build, what did you use, and what came of it?"})
+        elif not a.target and not valid and not projects:
+            followups.append({"term": a.term, "question": f"What was the project called, and roughly when did you do it? Or tell me which job or project on your resume it belongs to."})
 
     n = len(valid) + len(snippets)
     await emit(_event("draft", "done", f"{n} thing{'s' if n != 1 else ''} ready to review"))
@@ -711,10 +761,8 @@ async def answer_gaps(
 
 
 async def _project_snippet(doc: ParsedResume, analysis: JobAnalysis, answer: Answer, item: EvidenceItem,
-                           bullets: list[str], current_tex: str, page_limit: int | None) -> dict:
+                           bullets: list[str], current_tex: str, page_limit: int | None, info: ProjectInfo) -> dict:
     """The LaTeX for a new project, the resume with it added, and what adding it is worth."""
-    info = answer.project
-    assert info is not None
     current = parse_resume(current_tex)
     block = project_block(current, info.name, info.dates, info.tech, bullets)
     merged, where = insert_project(current, block)

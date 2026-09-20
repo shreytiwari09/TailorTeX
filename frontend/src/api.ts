@@ -110,6 +110,7 @@ export type Result = {
   recommendations?: Recommendation[]
   ats?: { before: number; after: number }
   gains?: { gaps: GapGain[]; quality: number }
+  inferred?: Inferred[]
   fit_note: string | null
   tex: string
   pdf: string | null
@@ -119,6 +120,7 @@ export type Result = {
   usage: { provider: string; model: string; input_tokens: number; output_tokens: number; calls: number }
   warnings: string[]
 }
+export type Inferred = { term: string; quote: string; origin: string; how: 'named' | 'described'; source: string; scope: string | null }
 export type GapGain = { term: string; must: boolean; weight: number; gain: number; from: TermStatus }
 export type Recommendation = {
   priority: 'high' | 'medium' | 'low'

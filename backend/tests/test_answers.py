@@ -274,3 +274,62 @@ def test_an_answer_about_an_existing_job_and_one_about_a_new_project_can_share_o
     result, llm = run(plan, answers)
     assert llm.plan_calls == 1 and len(result["ops"]) == 1 and len(result["projects"]) == 1
     assert result["evidence"][1]["title"] == "Project: Ticket Router"  # the project name travels with the stored answer
+
+
+# --- a plain reply in a chat: the server decides where it belongs ------------------------------------------
+
+
+CHAT_TEXT = "At a hackathon I built a Fraud Detector with PyTorch and Python in Jan 2026 that flags fraudulent card transfers and cut review time by 30%"
+
+
+def reply(**kw):
+    """One plain reply: no target, no project marked."""
+    return [Answer(term="PyTorch", text=kw.get("text", CHAT_TEXT))]
+
+
+def auto_project(name="Fraud Detector", dates="Jan 2026", tech=None, bullets=None):
+    return {"ops": [], "followups": [], "projects": [{"answer": "ans1", "name": name, "dates": dates, "tech": tech or ["PyTorch", "Python"],
+                                                      "bullets": bullets or GOOD_BULLETS}]}
+
+
+def test_a_reply_about_work_inside_an_existing_entry_becomes_a_bullet_there():
+    plan = {"ops": [{"op": "add", "target": "s1.e0", "after": "s1.e0.b1", "evidence": ["ans1"], "reason": "x",
+                     "text": "Trained a PyTorch model that flags fraudulent transfers, cutting manual review time by 30%"}], "projects": [], "followups": []}
+    result, _ = run(plan, [Answer(term="PyTorch", text="At Finch Payments I trained a PyTorch model that flags fraudulent transfers and cut manual review time by 30%")])
+    assert len(result["ops"]) == 1 and result["projects"] == [] and result["followups"] == []
+
+
+def test_a_reply_that_names_a_separate_project_becomes_code_without_being_asked_to_mark_it():
+    result, llm = run(auto_project(), reply())
+    assert result["ops"] == [] and len(result["projects"]) == 1 and llm.plan_calls == 1
+    p = result["projects"][0]
+    assert p["name"] == "Fraud Detector" and p["dates"] == "Jan 2026" and "\\textbf{Fraud Detector}" in p["latex"]
+
+
+def test_a_project_name_the_model_made_up_is_not_used_and_the_person_is_asked():
+    """The name has to be in the person's own words. A tidy invented one is a fabricated fact about their resume."""
+    result, _ = run(auto_project(name="Fraud Guardian Pro"), reply())
+    assert result["projects"] == []
+    assert any("called" in f["question"] for f in result["followups"])
+
+
+def test_dates_and_technologies_the_reply_never_gave_are_dropped():
+    result, _ = run(auto_project(dates="March 2019", tech=["PyTorch", "Kubernetes", "Python"]), reply())
+    p = result["projects"][0]
+    assert p["dates"] == "" and "March 2019" not in p["latex"]  # not said, so not written
+    assert "Kubernetes" not in p["tech"] and "PyTorch" in p["tech"]
+
+
+def test_a_reply_with_no_name_and_no_entry_gets_a_question_not_a_guess():
+    thin = "I did some fraud detection work with PyTorch once and it cut review time by 30%"
+    result, _ = run({"ops": [], "projects": [], "followups": []}, reply(text=thin))
+    assert result["ops"] == [] and result["projects"] == []
+    assert len(result["followups"]) == 1 and "belongs to" in result["followups"][0]["question"]
+
+
+def test_when_the_model_returns_both_a_bullet_and_a_project_the_bullet_wins():
+    plan = {"ops": [{"op": "add", "target": "s1.e0", "after": "s1.e0.b1", "evidence": ["ans1"], "reason": "x",
+                     "text": "Trained a PyTorch model in Python that flags fraudulent card transfers"}],
+            "projects": [{"answer": "ans1", "name": "Fraud Detector", "dates": "", "tech": [], "bullets": GOOD_BULLETS}], "followups": []}
+    result, _ = run(plan, reply())
+    assert len(result["ops"]) == 1 and result["projects"] == []

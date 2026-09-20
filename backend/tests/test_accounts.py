@@ -706,3 +706,20 @@ def test_a_run_saved_before_the_combined_score_still_gets_one(client, monkeypatc
     done = client.post(f"/api/runs/{run_id}/rebuild", json={"ops": [], "compile": False}).json()
     saved = client.get(f"/api/runs/{run_id}").json()
     assert saved["ats"]["before"] is not None and saved["ats"]["after"] == done["ats"]  # complete, so the page never shows "NaN%"
+
+
+@needs_db
+def test_a_reply_that_produced_nothing_is_not_kept_so_no_half_answers_pile_up(client, monkeypatch):
+    run_id, llm = _saved_run(client, monkeypatch)
+    llm.plans = [{"ops": [], "projects": [], "followups": [{"term": "x", "question": "What was the project called?"}]}, PYTORCH_BULLET]
+    llm.plan_calls = 0
+    reply = "I trained a PyTorch model in a course project that cut review time by 30%"
+    first = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": reply}]}).json()
+    assert first["followups"] and first["stored"] is False and first["evidence"] == []
+    assert not [e for e in client.get("/api/profile/context").json()["entries"] if e["id"].startswith("ans")]
+
+    llm.plans, llm.plan_calls = [PYTORCH_BULLET], 0
+    text = "At Finch Payments I trained a PyTorch model that flags fraudulent transfers and cut manual review time by 30%"
+    second = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": text}]}).json()
+    assert second["stored"] is True and second["evidence"][0]["id"] == "ans1"  # the first number, not ans2
+    assert [e["id"] for e in client.get("/api/profile/context").json()["entries"] if e["id"].startswith("ans")] == ["ans1"]

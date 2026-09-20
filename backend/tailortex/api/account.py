@@ -449,6 +449,18 @@ class AnswersIn(BaseModel):
     ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
 
 
+def _run_evidence(profile: Profile, entries: list[EvidenceItem], run) -> list[EvidenceItem]:
+    """The person's evidence plus what was found in their own material during this run.
+
+    A change that cites something found that way has to validate again when it is rebuilt, so the run
+    keeps those items and every later request brings them back.
+    """
+    items = _evidence(profile, entries)
+    known = {i.id for i in items}
+    extra = [EvidenceItem.model_validate(e) for e in (run.result.get("inferred_evidence") or [])]
+    return items + [e for e in extra if e.id not in known]
+
+
 def _evidence(profile: Profile, entries: list[EvidenceItem]) -> list[EvidenceItem]:
     items = list(entries)
     if profile.skills:
@@ -504,7 +516,7 @@ async def rebuild_run(run_id: str, body: RunRebuildIn, request: Request, profile
         raise HTTPException(404, "No such resume.")
     try:
         out = await rebuild(run.source_tex, body.ops, JobAnalysis.model_validate(run.result.get("analysis") or {}),
-                            _evidence(profile, await repo.list_context(db, profile)), body.compile, run.result.get("page_limit"))
+                            _run_evidence(profile, await repo.list_context(db, profile), run), body.compile, run.result.get("page_limit"))
     except UnsafeLatexError as e:
         raise HTTPException(400, str(e)) from None
     out["ats"] = ats_score(out["after"])
@@ -535,16 +547,23 @@ async def answer_run(run_id: str, body: AnswersIn, request: Request, profile: Pr
     await core.ensure_model(llm)
     context = await repo.list_context(db, profile)
     analysis = JobAnalysis.model_validate(run.result.get("analysis") or {})
-    out = await answer_gaps(run.source_tex, analysis, _evidence(profile, context), body.answers, body.ops, llm,
+    out = await answer_gaps(run.source_tex, analysis, _run_evidence(profile, context, run), body.answers, body.ops, llm,
                             current_tex=run.tex, page_limit=run.result.get("page_limit"))
-    # keep what they told us: a permanent fact, findable by meaning in every future tailoring
-    items = [EvidenceItem.model_validate(e) for e in out["evidence"]]
-    saved = await repo.add_source(db, profile, "fact", items)
-    # The drafted bullets cite these ids. If storing had to renumber one, a bullet would cite evidence
-    # that doesn't exist, so refuse loudly rather than hand back a draft that can't be applied.
-    if [e.id for e in saved] != [e.id for e in items]:
-        raise HTTPException(409, "Your context changed while this was being written. Please try again.")
-    out["evidence"] = [e.model_dump() for e in saved]
+    # Keep what they told us as a permanent fact, findable by meaning in every future tailoring, but only
+    # once it has produced something. A reply that needed a follow-up question is sent again with the
+    # follow-up's answer added, and storing the half-finished version too would leave a duplicate behind.
+    if out["ops"] or out["projects"]:
+        items = [EvidenceItem.model_validate(e) for e in out["evidence"]]
+        saved = await repo.add_source(db, profile, "fact", items)
+        # The drafted bullets cite these ids. If storing had to renumber one, a bullet would cite evidence
+        # that doesn't exist, so refuse loudly rather than hand back a draft that can't be applied.
+        if [e.id for e in saved] != [e.id for e in items]:
+            raise HTTPException(409, "Your context changed while this was being written. Please try again.")
+        out["evidence"] = [e.model_dump() for e in saved]
+        out["stored"] = True
+    else:
+        out["evidence"] = []
+        out["stored"] = False
     out["usage"] = {"model": llm.model, "calls": llm.usage.calls}
     return out
 

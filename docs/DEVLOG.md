@@ -510,6 +510,61 @@ was fine; a rewrite had made a bullet read slightly worse (writing quality 95% -
 "This version scores 0.4% lower than your original. It mostly comes from how the reworded bullets read... Untick
 the changes that don't help." A test covers both directions, so it doesn't cry wolf when the score rose.
 
+## 27. "The skills are already in my projects. Why can't it find them?"
+
+**Found by the user,** looking at a panel that listed nine skills with a text box each: "I implemented these in
+my projects on GitHub and my earlier resume. If the model reasoned over my context it could find them. Use
+vectorization, and remember it's unique for every user."
+
+They were right about the design and partly right about the data. Checked against their real account:
+
+**The vector search was real and it worked.** `BAAI/bge-small-en-v1.5`, 384 dimensions, every entry embedded.
+Asked for "Generative AI" it returned the user's own CrewAI agent pipeline (0.70) and RAG-powered LLM pipeline.
+But it was only used to choose which entries to *show the model* for the job as a whole. Whether a skill was
+*backed* was decided by a plain word match, so "Generative AI", which isn't written anywhere, was "missing", the
+model was told not to add it, and the person was asked to prove something their resume already showed.
+
+**The data was thinner than they thought.** Their context held zero GitHub entries (the link was saved, nothing
+imported) and one LinkedIn post shredded into 14 fragments, from before notes were split on blank lines. Their
+3 public repos (DealFlow360, TailorTex, Arista-App) don't mention TensorFlow, PyTorch or scikit-learn, so for
+those there is nothing to find. Both were repaired for their account: the fragments are one entry again and the
+repos are imported.
+
+**Semantic support.** For each job skill that isn't written out, `evidence/support.py`:
+1. embeds the skill and searches the person's own passages, their context entries and their resume's bullets
+   (nobody else's), taking the top four per skill;
+2. asks the model once, for all skills together, whether any passage shows the work;
+3. accepts an answer only if the model **quotes the person's own words back verbatim** (checked as a substring,
+   ignoring case, spacing and bold markers) and the passage is one it was actually shown.
+
+Two rules keep it honest. A **tool, library or product** counts only if the passage *names* it, and this is
+checked in code, not taken from the model's `how` field: a model that says "named" about a quote that doesn't
+contain "TensorFlow" is refused. A **broad field** (machine learning, generative AI, statistics) can be shown by
+describing the work. A related tool proves nothing: LangChain doesn't show PyTorch.
+
+On the user's real data it found exactly one: *Generative AI*, quoting "RAG-powered LLM pipeline" from their
+Multimodal Interview Analysis project, and left the tools alone. With it counted as evidence the planner rewrote
+that bullet with the job's wording, worth +3.8% ATS where every change had been +0.0%.
+
+**Scoped, so it can't move a skill between jobs.** Something found in one resume entry can back bullets only in
+that entry (or the summary and skills lines), enforced in the validator with a new `scope` on the evidence item.
+The findings are stored on the run (`inferred_evidence`) and brought back on every rebuild, or a change citing
+one would fail to validate when applied.
+
+**The panel became a conversation.** The user's second point: it lists everything and asks for input on all of
+it, which is vague. It is now a chat (`SkillChat`): one skill at a time, most valuable first, with the reason
+("required, worth up to +5.3% ATS"). Skipping ("no", "haven't", the Skip button) costs no model call, and a
+reply too short to write from is asked to say more without one. **The server decides where a reply belongs**,
+instead of making the person choose: work done inside an existing job or project becomes a bullet there; a
+separate project becomes LaTeX to paste into Overleaf; if the reply names no project and it isn't clear which
+entry it belongs to, the assistant asks ("What was the project called, and roughly when?") and the next reply is
+combined with the first. A project name, dates or technologies that the model produced but the person never
+wrote are dropped: an invented tidy name for their project would be a fabricated fact about their resume.
+
+**A flaw the browser test found:** every reply was saved to context, including the ones that produced nothing, so
+an unfinished first reply was kept as `ans1` and the finished one as `ans2`. Only a reply that produced a bullet
+or project is saved now.
+
 ## Test status
 
-194 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+208 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

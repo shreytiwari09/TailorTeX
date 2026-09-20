@@ -5,7 +5,7 @@ import { base64ToBlob, downloadBlob, openInOverleaf, plain } from '../../util'
 import { useAuth } from '../auth'
 import { acct, type AnswerResult, type SavedRun } from '../client'
 import { atsOf, gainLabel } from '../format'
-import { AdvancedPanel, type Drafted, type Entry } from '../run/AdvancedPanel'
+import { SkillChat, type Drafted } from '../run/SkillChat'
 import { ChangeList, type Decision } from '../run/ChangeList'
 import { Details } from '../run/Details'
 import { Preview } from '../run/Preview'
@@ -78,16 +78,6 @@ export function RunPage() {
     for (const e of context) m[e.id] = { title: e.source === 'github' && e.url ? e.url.replace(/^https?:\/\/github\.com\//, '') : e.title || e.text.slice(0, 40), url: e.url }
     return m
   }, [context])
-
-  // The entries a new bullet can be added to, for "where does this belong?".
-  const entryList = useMemo<Entry[]>(() => {
-    const seen = new Map<string, string>()
-    for (const c of run?.changes ?? []) {
-      const entryId = c.target.split('.').slice(0, 2).join('.')
-      if (c.heading && !seen.has(entryId)) seen.set(entryId, c.heading.split('|')[0].trim())
-    }
-    return [...seen].map(([entryId, label]) => ({ id: entryId, label }))
-  }, [run])
 
   // The operations that make up the resume the person has chosen.
   const chosenOps = useCallback((): Op[] => {
@@ -214,10 +204,10 @@ export function RunPage() {
 
         <ChangeList changes={run.changes} decisions={decisions} onDecide={(cid, d) => setDecisions((p) => ({ ...p, [cid]: d }))} labels={labels} onReviewOneByOne={reviewOneByOne} />
 
-        <AdvancedPanel
+        <SkillChat
           runId={run.saved_run_id}
           gaps={gaps}
-          entries={entryList}
+          inferred={run.inferred ?? []}
           acceptedOps={chosenOps()}
           drafted={drafted}
           hasModel={!!profile?.model.key_saved || serverKey}

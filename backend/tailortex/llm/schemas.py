@@ -69,6 +69,9 @@ class ProjectDraft(BaseModel):
     """The bullets for one new project, written from one answer."""
 
     answer: str = Field(description="The id of the answer these bullets are written from")
+    name: str = Field(default="", description="The project's name exactly as the answer gives it, or empty if the answer doesn't name it")
+    dates: str = Field(default="", description="When, exactly as the answer says, or empty")
+    tech: list[str] = Field(default_factory=list, description="Technologies the answer names")
     bullets: list[str] = Field(default_factory=list, description="Two to four bullets, plain text, **bold** allowed")
 
 
@@ -76,3 +79,15 @@ class Draft(BaseModel):
     ops: list[PlanOp] = Field(default_factory=list)
     projects: list[ProjectDraft] = Field(default_factory=list)
     followups: list[Followup] = Field(default_factory=list)
+
+
+class SupportItem(BaseModel):
+    term: str
+    supported: bool = False
+    passage: str = Field(default="", description="The id of the passage that shows it")
+    quote: str = Field(default="", description="The exact words from that passage that show it, copied verbatim")
+    how: Literal["named", "described"] = Field(default="described", description="named: the passage names it. described: it shows the work in other words")
+
+
+class SupportReply(BaseModel):
+    terms: list[SupportItem] = Field(default_factory=list)
