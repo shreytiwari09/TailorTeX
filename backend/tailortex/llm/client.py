@@ -184,6 +184,8 @@ class LLMClient:
                 body.pop("response_format")  # some models don't support JSON mode; the prompt still asks for JSON
                 json_mode_dropped = True
                 continue
+            if r.status_code == 429 and _quota(r).get("per_day"):
+                return r  # a daily allowance: waiting inside this run can't bring it back
             # 429 is a rate limit (a minute usually clears it) and gets fewer tries than a busy server
             tries = len(BACKOFF) if r.status_code in OVERLOADED else 2 if r.status_code == 429 else 0
             if patience is not None:
@@ -202,7 +204,7 @@ class LLMClient:
             body["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(timeout=TIMEOUT) as http:
             r = await self._post_chat(http, body)
-            if r.status_code in OVERLOADED:
+            if _worth_another_model(r):
                 r = await self._try_other_models(http, body, r)
         if r.status_code != 200:
             raise _http_error(self.info.label, r)
@@ -221,19 +223,20 @@ class LLMClient:
         return content
 
     async def _try_other_models(self, http: httpx.AsyncClient, body: dict, failed: httpx.Response) -> httpx.Response:
-        """The chosen model stayed overloaded: move to a sibling model from the same provider, and say so."""
+        """This model is overloaded or out of its own allowance: move to a sibling and say so."""
+        why = "is out of its free allowance for today" if failed.status_code == 429 else "is overloaded"
         try:
             ids = [m.id for m in await self.list_models()]
         except LLMError:
             return failed
         for other in fallback_models(self.provider, ids, self.model):
-            await self._say(f"{self.model} is overloaded. Switching to {other} for this run.")
+            await self._say(f"{self.model} {why}. Switching to {other} for this run.")
             r = await self._post_chat(http, {**body, "model": other}, patience=1)
             if r.status_code == 200:
                 self.switched_from, self.model = self.model, other
                 return r
-            if r.status_code not in OVERLOADED and r.status_code != 404:
-                return r  # a real error (bad request, quota): report it rather than hide it
+            if not _worth_another_model(r) and r.status_code != 404:
+                return r  # a real error (bad request, a project-wide quota): report it rather than hide it
         return failed
 
     # --- Anthropic ---------------------------------------------------------------
@@ -323,18 +326,81 @@ def _http_error(label: str, r: httpx.Response) -> LLMError:
     if r.status_code == 404:
         return LLMError(f"That {label} model isn't available to this key.", "bad_request")
     if r.status_code == 429:
-        return LLMError(f"{label} rate limit or quota reached. Wait a minute, or use a different key.", "rate_limit")
+        q = _quota(r)
+        model = q.get("model") or ""
+        if q.get("per_day"):
+            limit = f" ({q['limit']} requests a day)" if q.get("limit") else ""
+            where = f"for {model} " if model else ""
+            extra = " Another key from the same Google Cloud project shares this limit, so a new key won't help." if label == "Google Gemini" else ""
+            return LLMError(
+                f"{label}: the free daily allowance {where}is used up{limit}."
+                f"{extra} Each model has its own allowance, so pick a different model in Settings, or come back tomorrow.",
+                "rate_limit",
+            )
+        wait = q.get("retry_after")
+        soon = f" Try again in about {round(wait)} seconds." if wait else " Wait a minute and try again."
+        return LLMError(f"{label} is limiting how often this key can be used.{soon}", "rate_limit")
     if r.status_code in OVERLOADED:
         return LLMError(f"{label} is overloaded right now ({r.status_code}: {msg}). TailorTeX waited and tried again, but it stayed busy. Try again in a few minutes, or pick another model in Settings.", "overloaded")
     return LLMError(f"{label} error ({r.status_code}): {msg}", "bad_request" if r.status_code < 500 else "provider")
 
 
 def _retry_after(r: httpx.Response) -> float | None:
-    """Seconds the provider asked us to wait (Retry-After), if it said."""
+    """Seconds the provider asked us to wait, from the header or from the body it sends with a 429."""
     try:
         return max(0.0, float(r.headers.get("retry-after", "")))
     except ValueError:
-        return None
+        pass
+    return _quota(r).get("retry_after")
+
+
+def _quota(r: httpx.Response) -> dict:
+    """What a 429 actually means: which limit, how big, for which model, and when to come back.
+
+    Google's free tier counts per project **per model** per day, so another key from the same project
+    shares the limit while another model has its own. Knowing which one decides what we do next.
+    """
+    if r.status_code != 429:
+        return {}
+    try:
+        payload = r.json()
+    except ValueError:
+        return {}
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
+    err = payload.get("error", payload) if isinstance(payload, dict) else {}
+    if not isinstance(err, dict):
+        return {}
+    out: dict = {}
+    for detail in err.get("details") or []:
+        if not isinstance(detail, dict):
+            continue
+        kind = str(detail.get("@type", ""))
+        if kind.endswith("RetryInfo"):
+            try:
+                out["retry_after"] = max(0.0, float(str(detail.get("retryDelay", "")).rstrip("s")))
+            except ValueError:
+                pass
+        elif kind.endswith("QuotaFailure"):
+            for v in detail.get("violations") or []:
+                if not isinstance(v, dict):
+                    continue
+                out["quota_id"] = str(v.get("quotaId", ""))
+                out["limit"] = str(v.get("quotaValue", ""))
+                out["model"] = str((v.get("quotaDimensions") or {}).get("model", ""))
+    text = f"{err.get('message', '')} {out.get('quota_id', '')}".lower()
+    out["per_day"] = "perday" in text.replace(" ", "") or "per day" in text
+    # a limit counted per model can be escaped by using another model; a project-wide one can't
+    out["per_model"] = "permodel" in text.replace(" ", "") or bool(out.get("model"))
+    return out
+
+
+def _worth_another_model(r: httpx.Response) -> bool:
+    """Would a different model from the same provider have a chance? Busy servers and per-model quotas, yes."""
+    if r.status_code in OVERLOADED:
+        return True
+    q = _quota(r)
+    return bool(q) and bool(q.get("per_model"))
 
 
 def _scrub(msg: str) -> str:

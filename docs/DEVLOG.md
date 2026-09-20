@@ -202,6 +202,26 @@ The first real run with a live model scored 26% → 31% must-have coverage, with
 
 **Also fixed:** a stand-in model used to get the full patience schedule of its own, so a run could spend a minute per candidate; it now gets one retry, and the real run that found this took 243 seconds mostly waiting.
 
+## 17. "I changed the key and it still says quota reached"
+
+**Found by the user.** The message said "Wait a minute, or use a different key", and both halves were wrong. Gemini's reply says exactly what happened, and TailorTeX was throwing it away:
+
+```
+Quota exceeded for metric: ...generate_content_free_tier_requests, limit: 20, model: gemini-3.8-flash
+quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier    retryDelay: 38s
+```
+
+**Per project, per model, per day.** A new API key made in the same Google Cloud project shares the same allowance, so swapping keys changes nothing — which is exactly what the user saw. Waiting doesn't help either; twenty requests is the whole day. But **each model has its own allowance**, so another model works immediately.
+
+**What it does now:**
+- **Reads the quota details** from the body (`QuotaFailure` and `RetryInfo`), not just the `Retry-After` header, which Google doesn't send here.
+- **Doesn't wait for a daily allowance.** A per-day 429 returns at once instead of sleeping through the backoff schedule.
+- **Switches model on a per-model quota**, the same as for an overloaded one: "gemini-3.8-flash is out of its free allowance for today. Switching to gemini-3.7-flash for this run."
+- **Says something true when everything is out:** which model, the size of the allowance, that a new key from the same project shares it, and that another model has its own.
+- **A per-minute limit is different** and is waited out for as long as Google asks (`retryDelay`, capped), and the final message gives the real number of seconds.
+
+**Checked against the real thing:** asking for a model whose 20 requests were gone switched to the next one and finished. The tests use Gemini's exact reply, list wrapper and all.
+
 ## Test status
 
-120 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+124 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

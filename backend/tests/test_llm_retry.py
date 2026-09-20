@@ -104,3 +104,57 @@ def test_fallback_models_are_stable_siblings_only():
     ids = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash-image"]
     assert fallback_models("google", ids, "gemini-2.5-flash") == ["gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"]
     assert fallback_models("openai", ["gpt-5-mini"], "gpt-5") == []
+
+
+# --- quotas: Google counts per project per model, per day -------------------------------------------
+
+# Gemini's own reply, as it arrives (list-wrapped, details in the body, no Retry-After header).
+DAILY = [{"error": {
+    "code": 429, "status": "RESOURCE_EXHAUSTED",
+    "message": ("You exceeded your current quota, please check your plan and billing details.\n"
+                "* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, "
+                "limit: 20, model: gemini-2.5-flash\nPlease retry in 38.63183958s."),
+    "details": [
+        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [
+            {"quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+             "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+             "quotaDimensions": {"location": "global", "model": "gemini-2.5-flash"}, "quotaValue": "20"}]},
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "38s"},
+    ]}}]
+PER_MINUTE = [{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded for quota metric: requests per minute",
+                         "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "11s"}]}}]
+
+
+def test_a_used_up_daily_allowance_moves_to_another_model_instead_of_waiting(monkeypatch):
+    script = Script(monkeypatch, {"gemini-2.5-flash": [(429, DAILY)], "gemini-2.0-flash": [(200, GOOD)]})
+    notes: list[str] = []
+    llm = make(notes)
+    assert asyncio.run(llm.complete("sys", "user", Answer)).ok
+    assert script.sleeps == []  # tomorrow's quota can't be waited for inside a run
+    assert script.sent == ["gemini-2.5-flash", "gemini-2.0-flash"] and llm.model == "gemini-2.0-flash"
+    assert any("out of its free allowance for today" in n for n in notes)
+
+
+def test_when_every_model_is_out_the_error_says_a_new_key_would_not_help(monkeypatch):
+    Script(monkeypatch, {m: [(429, DAILY)] * 2 for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash")})
+    with pytest.raises(LLMError) as e:
+        asyncio.run(make([]).complete("sys", "user", Answer))
+    msg = str(e.value)
+    assert e.value.kind == "rate_limit"
+    assert "20 requests a day" in msg and "gemini-2.5-flash" in msg
+    assert "new key won't help" in msg and "different model" in msg
+
+
+def test_a_per_minute_limit_is_waited_out_for_as_long_as_google_asks(monkeypatch):
+    script = Script(monkeypatch, {"gemini-2.5-flash": [(429, PER_MINUTE), (200, GOOD)]})
+    notes: list[str] = []
+    assert asyncio.run(make(notes).complete("sys", "user", Answer)).ok
+    assert 11 <= script.sleeps[0] <= 12 and script.sent == ["gemini-2.5-flash"] * 2  # the body's retryDelay, not the backoff
+    assert "rate limiting" in notes[0]
+
+
+def test_a_per_minute_limit_that_does_not_clear_says_how_long_to_wait(monkeypatch):
+    Script(monkeypatch, {"gemini-2.5-flash": [(429, PER_MINUTE)] * 3})
+    with pytest.raises(LLMError) as e:
+        asyncio.run(make([]).complete("sys", "user", Answer))
+    assert "about 11 seconds" in str(e.value) and "daily" not in str(e.value)
