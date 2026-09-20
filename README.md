@@ -23,10 +23,12 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **LaTeX in, LaTeX out.** Your template stays byte-for-byte intact. Only bullets, the summary and skills lines change, and every change is a precise edit at a known position.
 - **Always compiles.** The model never writes LaTeX. It returns edit operations in plain text, and TailorTeX writes the LaTeX itself with an escaper that can't produce broken markup.
 - **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from your context. Rejected edits go back to the model with the reason, and you see them.
-- **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it. Each run ends with prioritized recommendations.
+- **Honest ATS checks.** One score, everywhere. Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it, alongside writing quality that holds whatever the job is: strong openers, results, bullet length, consistent dates, a readable contact line. Each run ends with prioritized recommendations.
 - **A permanent profile per person.** Sign in once. Your details, reference resume, model key (encrypted) and every tailored resume are saved, so you can generate resumes for different jobs again and again.
 - **A knowledge base the model draws on.** GitHub link (every public repository; you pick which ones count if you have more than ten), portfolio link, LinkedIn PDF and free-text notes become entries in PostgreSQL with pgvector embeddings. A blank line starts a new note, so a pasted post stays whole. For each job, TailorTeX finds the entries closest in meaning (so "event streaming" finds your Kafka note) and only adds what those entries back.
-- **Review everything.** Word-level diff for every change with the reason and what backs it. Keep, revert or edit each one, then rebuild the PDF.
+- **Finds what your own material already shows, by meaning.** A job asks for "Generative AI"; your resume says "RAG-powered LLM pipeline". Each unmatched skill is searched for across your resume and context by meaning, and a match counts only if the model can quote your own words back exactly. A named tool, product or certification still has to be named — a related one proves nothing.
+- **Tells you exactly what is missing, and what each one is worth.** Everything the job asks for that nothing of yours shows is listed together with its ATS value. Tick the ones you have and they go onto your Skills lines in one click — a plain edit to your `.tex`, no model involved. For work you actually did, say so in your own words: it writes a bullet from what you said, or the LaTeX for a whole new project in your resume's own style, and nothing you didn't say can appear in it.
+- **Review everything.** Word-level diff for every change, with the reason, what backs it, and what it is worth (`+4.4%`). Keep, revert or edit each one, watch the estimate move, then rebuild the PDF.
 - **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live. When a provider is busy, or a model's free daily allowance is gone, TailorTeX says so plainly and moves to another model of the same provider rather than losing the run.
 - **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each person's writing style.
 
@@ -102,16 +104,21 @@ To turn it on, create a Firebase project, enable the Google and Email/Password p
 | Bullets stay within the template's length budget | Overflowing lines that push the resume to two pages |
 | A job keyword appears at most 3 times across bullets | Keyword stuffing that semantic screeners penalize |
 | Model text containing LaTeX is rejected; all text goes through the escaper | `\textbf{}`, stray `&`, `%` or `$` breaking the compile |
+| Dropping a bullet may not remove the last mention of a skill the job requires | A page-fit drop that lowers the very score it is raising |
 
-Keyword matching understands tech names: K8s = Kubernetes, Postgres = PostgreSQL, `C` doesn't match `C++`, `Java` doesn't match `JavaScript`, and "spark interest" isn't Spark.
+Keyword matching understands tech names: K8s = Kubernetes, Postgres = PostgreSQL, `C` doesn't match `C++`, `Java` doesn't match `JavaScript`, and "spark interest" isn't Spark. A skill **you** state about yourself, or tick from the job's own list, is your edit to your own resume and is applied as given; text the model writes is never marked that way, and a test fails if it ever is.
 
 ### ATS checks on the compiled PDF
 
 Selectable text · no ligature glyphs ("ﬁnancial" isn't "financial") · no icon-font garbage · email and phone readable near the top · standard section headings · single-column reading order. Source lint catches missing `\pdfgentounicode`, FontAwesome icons and two-column layouts, with a one-click fix where possible.
 
-### Supported templates
+### Templates, and how far it has been tested
 
-Jake's Resume and its many variants, Awesome-CV, moderncv, and generic `article` resumes that use `\section` and `itemize`. Custom bullet and heading macros are recognized from their `\newcommand` definitions. The default template in `backend/tailortex/templates/jake/` is an ATS-safe version of Jake's Resume (MIT License).
+Jake's Resume and its many variants, Awesome-CV, moderncv, and generic `article` resumes that use `\section` and `itemize`. Custom bullet and heading macros are recognized from their `\newcommand` definitions. Skills sections are read whether they are labelled lines (`\textbf{Languages:} ...`), bullet-separated lines, a description list, a table row, or a plain comma-separated paragraph with no label at all.
+
+`backend/tests/corpus/` holds thirteen resumes written in deliberately different ways — an article-class nursing CV, a marketing resume built from tables, custom finance macros, a two-page academic CV, a description-list engineering resume, a photo header, accented names, moderncv and Awesome-CV — and ten job analyses from different trades, including one that says almost nothing and one that tries to give instructions. Every resume is measured against every job, and three rules hold for all of them: the parser never crashes, an edit that changes nothing changes nothing byte for byte, and anything a rewrite would silently damage (italics, monospace, small caps, math, forced breaks, unusual accents) is locked with a reason instead of being edited.
+
+The default template in `backend/tailortex/templates/jake/` is an ATS-safe version of Jake's Resume (MIT License).
 
 ## Layout
 
@@ -156,6 +163,9 @@ Signed in (session cookie):
 | `GET/PUT /api/profile`, `PUT /api/profile/resume`, `/model`, `/notes`, `/skills`; `DELETE /api/profile` | Your details, reference resume, encrypted model key, notes, skills; delete everything |
 | `GET /api/profile/context`; `POST /api/profile/context/links`, `/github`, `/linkedin`; `PATCH`/`DELETE /api/profile/context/{id}` | Your knowledge base |
 | `POST /api/runs` (streamed), `GET /api/runs`, `GET/DELETE /api/runs/{id}`, `POST /api/runs/{id}/rebuild` | Tailor from your stored profile and context; history |
+| `POST /api/runs/{id}/skills` | Add skills you ticked from the job's list to your Skills lines. No model call, so it works without a key |
+| `POST /api/runs/{id}/chat` | Say anything about a skill in your own words; it works out what you mean and drafts it |
+| `POST /api/runs/{id}/answers` | Draft bullets from what you told us about skills the job wants |
 
 ## Where your data is stored
 
@@ -184,6 +194,7 @@ Your resume, job description and context are sent to the model provider you choo
 
 ## Roadmap
 
+- Creating a Skills section in a resume that has none, and carrying italics and monospace through a rewrite instead of locking the bullet.
 - Application tracking (interviewing, archived) on the dashboard, and callbacks as a learning signal.
 - The new design for the no-login demo, a dark theme, and mobile polish.
 - A small open model fine-tuned on accepted edits, so tailoring works without a key.

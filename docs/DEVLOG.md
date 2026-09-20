@@ -702,3 +702,10 @@ mechanical, teaching, sales, one that says almost nothing, and one that tries to
 corpus resume is measured against every one of them: 130 combinations asserting no crash, scores inside
 0..1, gaps drawn only from the job's own terms, and gap worth that never promises more than coverage is
 worth. A job that says "ignore all previous instructions" becomes terms to look for, like any other words.
+
+### Docker and the README
+
+Rebuilt the image and brought the stack up from scratch: `/api/config` reports TeX present, the app is served
+on :8000, and the new `/api/runs/{id}/skills` route is in the served OpenAPI. The README now describes the
+missing-skills panel, meaning-based matching, per-change worth, the skills-section styles the parser reads,
+and what the corpus of thirteen resumes by ten jobs actually asserts.
