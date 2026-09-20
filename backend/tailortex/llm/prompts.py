@@ -31,6 +31,18 @@ Extract:
 Rules: one concept per term (split "Python/Go" into two terms); skip soft skills unless the job treats them as a core requirement; skip degrees, years of experience, benefits, salary, location and equal-opportunity text."""
 
 
+MIN_BULLET_CHARS = 60  # shorter than this and a bullet has no room for a result
+
+ATS_RULES = """How to write a bullet (these raise a resume's score on any job, so apply them throughout):
+- One sentence saying what you did, how you did it, and what changed as a result. A bullet with no outcome is a job description, not an achievement.
+- Open with a strong past-tense verb: Built, Led, Shipped, Migrated, Cut, Automated, Designed, Scaled, Rewrote, Reduced. Never "Responsible for", "Worked on", "Helped with", "Assisted in", "Duties included", and never a gerund ("Building...").
+- Name the tools inside the sentence, where a screener reads them in use, rather than as a trailing list.
+- Quantify the result by KEEPING a number that is already in this entry or in evidence you cite. Rule 1 still wins: a number you can't source is a rejected operation. With no number you may cite, end on a concrete outcome in words instead. Never estimate, round or combine figures.
+- Aim for {min_chars}-{budget} characters: long enough to carry a result, short enough for one line.
+- No first person: no "I", "we", "my", "our".
+- Past tense everywhere except the role the candidate currently holds.
+- Vary the opening verb. Don't start more than two bullets with the same word."""
+
 PLAN_SYSTEM = """You tailor a LaTeX resume to a job by proposing edit operations. You never write LaTeX: all text is plain text, and **double asterisks** mark bold. TailorTeX applies your operations and checks each one in code. Operations that break a rule are rejected.
 
 Rules (enforced in code):
@@ -42,10 +54,11 @@ Rules (enforced in code):
 6. Evidence scope: [skill] evidence only in the summary and skills lines; [github] and [portfolio] evidence only in projects, activities, the summary and skills lines; [fact] evidence anywhere.
 7. Job terms marked MISSING have no evidence. Don't add them anywhere.
 
+{ats_rules}
+
 How to tailor well:
 - Use the job's exact wording where the resume already supports it (for example "REST endpoints" becomes "REST APIs" when the job says REST APIs).
 - Put the most relevant bullets first in each entry (reorder) and the most relevant projects first (reorder_entries).
-- Start each bullet with a strong past-tense verb, keep its metric, and make the result clear.
 - Add a bullet (add) only from cited evidence, and only for terms marked EVIDENCE.
 - Skills lines: lead with the job's skills the candidate has, add skills from the evidence bank, and drop ones irrelevant to this job. The text is only the comma-separated values, without the label.
 - Keep what already works. Don't rewrite a bullet just to rephrase it.
@@ -134,7 +147,7 @@ def plan_user(doc: ParsedResume, evidence: list[EvidenceItem], analysis: JobAnal
     )
 
 
-def plan_system(budget: int, strategy: str, style_rules: list[str], liked: list[str]) -> str:
+def plan_system(budget: int, strategy: str, style_rules: list[str], liked: list[str], min_chars: int = MIN_BULLET_CHARS) -> str:
     style = ""
     if style_rules or liked:
         style = "\n\nThis user's style preferences (follow them unless they conflict with the rules):"
@@ -144,7 +157,8 @@ def plan_system(budget: int, strategy: str, style_rules: list[str], liked: list[
             style += "\nBullets this user kept or wrote themselves, as style examples:"
             for b in liked:
                 style += f"\n- {b}"
-    return PLAN_SYSTEM.format(budget=budget, strategy=strategy, style=style)
+    rules = ATS_RULES.format(min_chars=min_chars, budget=budget)
+    return PLAN_SYSTEM.format(budget=budget, strategy=strategy, style=style, ats_rules=rules)
 
 
 def retry_user(base: str, previous_ops: list[dict], rejected: list[str]) -> str:

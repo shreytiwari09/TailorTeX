@@ -284,6 +284,27 @@ some bullet or the summary afterwards. Nice-to-haves may fall back to the skills
 On the user's own resume and job, this protects exactly two bullets — between them they carry every must-have
 that resume can back.
 
+## 21. The ATS rules the tool actually knows
+
+The planning prompt had exactly one line of writing guidance: "Start each bullet with a strong past-tense
+verb, keep its metric, and make the result clear." Everything else it knew was about *this* job's keywords.
+So a resume could gain keywords and still be full of "Responsible for maintaining the payments API".
+
+[docs/ATS.md](ATS.md) now writes down what actually raises a score — what an ATS really is (a database with a
+search box, so extractable text comes first), why a term in a bullet is worth 1.0 and the same term in a
+skills list 0.6, how to write a bullet (what/how/result, strong verbs, tools named in the sentence, quantified,
+60-220 characters, no first person, past tense, varied verbs), and the document rules (standard headings, one
+column, no tables, contact details in the body, no icon fonts, ligature fix, consistent dates). It ends with a
+table mapping every rule to the module that enforces it, and a test fails if the two drift apart.
+
+The same rules go to the model as `ATS_RULES`, injected into the planning prompt **after** the numbered
+guardrails, so "quantify the result" is read as subordinate to "never invent" — and the rule itself says so:
+*"Quantify by KEEPING a number that is already in this entry or in evidence you cite. Rule 1 still wins."*
+About 230 extra tokens on a prefix-stable prompt, and no extra model calls.
+
+The honesty section is the part worth keeping: every other rule is presentation, and none of them is a licence
+to add something the person didn't do. A score near 100% on a job you don't match is a failure, not a win.
+
 ## Test status
 
-130 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+132 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

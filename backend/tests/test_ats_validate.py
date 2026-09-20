@@ -335,3 +335,26 @@ def test_dropping_a_project_entry_is_refused_when_it_holds_a_lone_must_have():
     r = validate_ops([Op(op="drop_entry", target="s2.e1", reason="space")], c)
     assert not r.valid and r.violations[0].rule == "coverage" and "FastAPI" in r.violations[0].message
     assert validate_ops([Op(op="drop_entry", target="s2.e0", reason="space")], c).valid
+
+
+# --- the ATS writing rules reach the model --------------------------------------------
+
+
+def test_plan_prompt_carries_the_ats_rules_after_the_no_invention_rule():
+    from tailortex.llm.prompts import plan_system
+
+    t = plan_system(220, "balanced", [], [])
+    for phrase in ("Responsible for", "what you did, how you did it", "60-220 characters", "No first person"):
+        assert phrase in t, phrase
+    # the guardrail is stated before the writing advice, so "quantify" can't read as permission to invent
+    assert t.index("1. Never invent") < t.index("How to write a bullet")
+    assert "Rule 1 still wins" in t
+
+
+def test_ats_doc_covers_every_check_the_code_makes():
+    """The written guide and the code shouldn't drift apart."""
+    doc = (Path(__file__).parents[2] / "docs" / "ATS.md").read_text()
+    for check in ("text_layer", "ligatures", "garbage", "contact", "headings", "order"):
+        assert check in doc, f"{check} is measured but not documented"
+    for module in ("_check_coverage", "_check_stuffing", "ATS_RULES", "coverage_loss"):
+        assert module in doc, f"{module} enforces a rule but isn't named in the doc"
