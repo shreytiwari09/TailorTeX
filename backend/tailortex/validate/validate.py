@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 
+from ..ats.coverage import coverage_loss, zones_after
 from ..ats.terms import SYNONYM_GROUPS, contains_term, count_term, is_known_tech
 from ..latex.parse import Block, ParsedResume
 from ..ops import Op
@@ -87,6 +88,20 @@ class ValidationContext:
     evidence: list[EvidenceItem]
     analysis: JobAnalysis | None = None
     max_keyword_uses: int = MAX_KEYWORD_USES
+    protect_coverage: bool = True  # refuse a drop that removes the last mention of a must-have keyword
+
+
+def _and(terms: list[str]) -> str:
+    """'Kubernetes', or 'Kubernetes and Terraform', or 'Kubernetes, Terraform and Go'."""
+    quoted = [f"'{t}'" for t in terms]
+    return quoted[0] if len(quoted) == 1 else " and ".join([", ".join(quoted[:-1]), quoted[-1]])
+
+
+def _coverage_loss(ctx: ValidationContext, valid: list[Op], candidate: Op) -> list[str]:
+    """Must-have keywords the resume would stop showing in a bullet if this drop were allowed."""
+    if not ctx.protect_coverage or ctx.analysis is None:
+        return []
+    return coverage_loss(ctx.doc, ctx.analysis, valid, candidate)
 
 
 # --- extraction ---------------------------------------------------------------
@@ -212,6 +227,10 @@ def validate_ops(ops: list[Op], ctx: ValidationContext) -> ValidationResult:
                 if entry and n >= len(entry.bullets):
                     reject(i, op, "structure", f"Dropping {op.target} would leave {entry.id} with no bullets.")
                     continue
+                lost = _coverage_loss(ctx, [o for _, o in valid], op)
+                if lost:
+                    reject(i, op, "coverage", f"Dropping {op.target} would remove the only mention of {_and(lost)}, which this job requires. Rewrite it to make room instead.")
+                    continue
                 drops_per_entry[bl.entry_id or ""] = n
                 touched.add(op.target)
                 valid.append((i, op))
@@ -274,6 +293,10 @@ def validate_ops(ops: list[Op], ctx: ValidationContext) -> ValidationResult:
                 if n >= len(sec.entries):
                     reject(i, op, "structure", f"Dropping {op.target} would leave '{sec.title}' empty.")
                     continue
+                lost = _coverage_loss(ctx, [o for _, o in valid], op)
+                if lost:
+                    reject(i, op, "coverage", f"Dropping {op.target} would remove the only mention of {_and(lost)}, which this job requires. Keep the entry and shorten it instead.")
+                    continue
                 dropped_entries[sid] = n
             valid.append((i, op))
         else:
@@ -281,6 +304,8 @@ def validate_ops(ops: list[Op], ctx: ValidationContext) -> ValidationResult:
 
     valid, stuffing = _check_stuffing(valid, ctx)
     violations.extend(stuffing)
+    valid, lost = _check_coverage(valid, ctx)
+    violations.extend(lost)
     violations.sort(key=lambda v: v.op_index)
     return ValidationResult([op for _, op in valid], violations)
 
@@ -369,6 +394,57 @@ def _be(items: list) -> str:
 def _in_text(pool: str, word: str) -> bool:
     """Plain word-boundary match, for proper nouns the tech matcher doesn't know."""
     return re.search(r"(?<![A-Za-z0-9])" + re.escape(word) + r"(?![A-Za-z0-9])", pool, re.IGNORECASE) is not None
+
+
+def _check_coverage(valid: list[tuple[int, Op]], ctx: ValidationContext) -> tuple[list[tuple[int, Op]], list[Violation]]:
+    """Refuse the plan's net loss of a must-have keyword, whoever caused it.
+
+    The per-op guard on `drop` catches the obvious case, but it judges each operation on its own: a
+    drop can look safe because another bullet still carries the term, and then a rewrite later in the
+    same plan removes that one too. Tailoring is meant to raise the match, so the finished plan is
+    checked as a whole and the last operation that cost a term is rejected, the way stuffing is.
+    """
+    if not ctx.analysis or not ctx.protect_coverage:
+        return valid, []
+    doc = ctx.doc
+    musts = [t.term for t, must in ctx.analysis.terms() if must]
+    if not musts:
+        return valid, []
+    before_context, _ = zones_after(doc, [])
+    violations: list[Violation] = []
+    keep = list(valid)
+    for term in musts:
+        if not count_term(before_context, term):
+            continue  # it wasn't shown in a bullet to begin with, so nothing to protect
+        while True:
+            after_context, _ = zones_after(doc, [op for _, op in keep])
+            if count_term(after_context, term):
+                break
+            culprit = None
+            for i, op in reversed(keep):
+                if op.source == "user":
+                    continue  # the person wrote this themselves; their wording wins over the score
+                was = _op_text_before(doc, op)
+                removed = op.op in ("drop", "drop_entry") or (op.op == "rewrite" and count_term(op.text or "", term) < count_term(was, term))
+                if removed and count_term(was, term):
+                    culprit = (i, op)
+                    break
+            if culprit is None:
+                break
+            keep.remove(culprit)
+            ci, cop = culprit
+            verb = "Dropping" if cop.op in ("drop", "drop_entry") else "This rewrite of"
+            violations.append(Violation(ci, cop, "coverage", f"{verb} {cop.target} would leave '{term}' out of every bullet, and this job requires it. Keep it, or work it into another bullet."))
+    return keep, violations
+
+
+def _op_text_before(doc: ParsedResume, op: Op) -> str:
+    """The resume text an operation would remove or replace."""
+    if op.op == "drop_entry":
+        entry = doc.entry(op.target)
+        return "\n".join(b.text for b in entry.bullets) if entry else ""
+    block = doc.block(op.target)
+    return block.text if block else ""
 
 
 def _check_stuffing(valid: list[tuple[int, Op]], ctx: ValidationContext) -> tuple[list[tuple[int, Op]], list[Violation]]:

@@ -17,8 +17,8 @@ ARMS: dict[str, str] = {
     ),
     "bold": (
         "Restructure for this job. Rewrite most bullets in the relevant entries around the job's must-haves, drop the "
-        "least relevant bullet in entries with four or more, reorder projects by relevance, and update the skills lines "
-        "and summary."
+        "least relevant bullet in entries with four or more (never the only bullet that mentions a must-have), reorder "
+        "projects by relevance, and update the skills lines and summary."
     ),
     "evidence_first": (
         "Close gaps with evidence first. For must-have terms marked EVIDENCE, add bullets from the cited evidence and put "

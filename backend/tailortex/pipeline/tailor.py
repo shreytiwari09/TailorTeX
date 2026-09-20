@@ -19,7 +19,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from ..ats.coverage import Gap, coverage_scores, gap_analysis, term_coverage, title_alignment
+from ..ats.coverage import Gap, coverage_loss, coverage_scores, gap_analysis, term_coverage, title_alignment
 from ..ats.health import health_score, lint_source, parse_health
 from ..ats.recommend import recommendations
 from ..ats.terms import contains_term, count_term, same_term
@@ -140,12 +140,17 @@ def _relevance(text: str, analysis: JobAnalysis) -> float:
     return sum(count_term(text, t.term) * t.weight * (2 if must else 1) for t, must in analysis.terms())
 
 
-def _fit_candidate(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> Op | None:
-    """The least relevant bullet that can be dropped to save space, as a drop op."""
+def _fit_candidates(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> list[Op]:
+    """Bullets that can be dropped to save space, least relevant first.
+
+    A bullet is only offered if the resume still shows every must-have keyword it carries afterwards:
+    dropping the one bullet that mentions Kubernetes to save a line would lower the very score the
+    page fit is protecting.
+    """
     dropped = {o.target for o in ops if o.op == "drop"}
     dropped_entries = {o.target for o in ops if o.op == "drop_entry"}
     rewrites = {o.target: o.text or "" for o in ops if o.op == "rewrite"}
-    best = None
+    ranked: list[tuple[tuple, str]] = []
     for s in doc.sections:
         if s.locked or s.kind not in ("experience", "projects", "activities"):
             continue
@@ -160,12 +165,21 @@ def _fit_candidate(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> O
                 if b.locked:
                     continue
                 text = rewrites.get(b.id, b.text)
-                key = (_relevance(text, analysis), -(len(alive) + added), -len(text))
-                if best is None or key < best[0]:
-                    best = (key, b.id)
-    if best is None:
-        return None
-    return Op(op="drop", target=best[1], reason="Removed to keep the page limit: the least relevant bullet for this job.", source="fit")
+                ranked.append(((_relevance(text, analysis), -(len(alive) + added), -len(text)), b.id))
+    ranked.sort(key=lambda x: x[0])
+
+    out: list[Op] = []
+    for _, bullet_id in ranked:
+        op = Op(op="drop", target=bullet_id, reason="Removed to keep the page limit: the least relevant bullet for this job.", source="fit")
+        if coverage_loss(doc, analysis, ops, op):
+            continue
+        out.append(op)
+    return out
+
+
+def _fit_candidate(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis) -> Op | None:
+    """The least relevant bullet that can be dropped without losing a must-have keyword."""
+    return next(iter(_fit_candidates(doc, ops, analysis)), None)
 
 
 def normalize_ops(doc: ParsedResume, ops: list[Op]) -> list[Op]:

@@ -220,7 +220,12 @@ def test_user_edits_skip_fabrication_checks():
 def test_reward_gates_and_ordering():
     base = dict(valid=True, compiled=True, pages=1, page_limit=1, must_have=0.5, nice_to_have=0.5, title=1.0, parse_health=1.0, page_fill=0.9)
     assert reward(RewardInput(**{**base, "compiled": False})).total == 0
-    assert reward(RewardInput(**{**base, "pages": 2})).total == 0
+    # Over the page limit is penalised steeply, not zeroed: a hard zero made every long candidate
+    # equally worthless, which pushed the page fit into dropping bullets that carried keywords.
+    over = reward(RewardInput(**{**base, "pages": 2}))
+    within = reward(RewardInput(**base))
+    assert 0 < over.total < within.total and over.gated == "2 pages, limit 1"
+    assert reward(RewardInput(**{**base, "pages": 3})).total < over.total
     low = reward(RewardInput(**base)).total
     high = reward(RewardInput(**{**base, "must_have": 0.9})).total
     stuffed = reward(RewardInput(**{**base, "must_have": 0.9, "stuffing": 3})).total
@@ -270,3 +275,63 @@ def test_recommendations_from_measured_results():
     assert any(t.startswith("Room for more") for t in by_title)
     assert "Use “chatrelay”" in by_title
     assert not any("Go" == r["term"] for r in recs)
+
+
+# --- dropping a bullet must never cost a must-have keyword -------------------------------
+
+
+def drop_jd() -> JobAnalysis:
+    """Terms chosen because each appears in exactly one bullet of the sample resume."""
+    return JobAnalysis(
+        title="Backend Software Engineer",
+        must_have=[JobTerm(term="Python", weight=3), JobTerm(term="Celery", weight=2), JobTerm(term="FastAPI", weight=2)],
+        nice_to_have=[JobTerm(term="Redis", weight=1)],
+    )
+
+
+def drop_ctx(protect: bool = True) -> ValidationContext:
+    return ValidationContext(doc=parse_resume(JAKE), evidence=evidence(), analysis=drop_jd(), protect_coverage=protect)
+
+
+def test_drop_that_removes_the_only_must_have_mention_is_refused():
+    """The reported bug: the page fit removed bullets and lowered the very score it protects."""
+    c = drop_ctx()
+    for target, term in (("s1.e0.b0", "Python"), ("s1.e0.b3", "Celery")):
+        r = validate_ops([Op(op="drop", target=target, reason="space")], c)
+        assert not r.valid, f"{target} should have been refused"
+        v = r.violations[0]
+        assert v.rule == "coverage" and term in v.message and "Rewrite it to make room" in v.message
+
+
+def test_drop_is_allowed_when_the_keyword_survives_elsewhere():
+    c = drop_ctx()
+    # Redis is only nice-to-have, so its bullet may go
+    assert validate_ops([Op(op="drop", target="s1.e0.b1", reason="space")], c).valid
+    # and a must-have bullet may go once another bullet still carries the term
+    keep = Op(op="rewrite", target="s1.e0.b2", text="Wrote integration tests in Python with pytest that raised coverage of the payouts service from 41% to 78%")
+    r = validate_ops([keep, Op(op="drop", target="s1.e0.b0", reason="space")], c)
+    assert r.valid and len(r.valid) == 2
+
+
+def test_the_guard_can_be_turned_off_so_a_person_can_drop_what_they_like():
+    assert validate_ops([Op(op="drop", target="s1.e0.b0", reason="the person chose this")], drop_ctx(protect=False)).valid
+
+
+def test_page_fit_never_offers_a_bullet_that_carries_a_lone_must_have():
+    from tailortex.pipeline.tailor import _fit_candidates
+
+    doc = parse_resume(JAKE)
+    candidates = _fit_candidates(doc, [], drop_jd())
+    offered = {op.target for op in candidates}
+    assert "s1.e0.b0" not in offered and "s1.e0.b3" not in offered  # the only Python and Celery bullets
+    assert "s1.e0.b1" in offered  # Redis is nice-to-have, so this one may go
+    assert all(op.op == "drop" and op.source == "fit" for op in candidates)
+    assert offered, "the fit loop still needs something it can drop"
+
+
+def test_dropping_a_project_entry_is_refused_when_it_holds_a_lone_must_have():
+    c = drop_ctx()
+    # s2.e1 is the only entry mentioning FastAPI
+    r = validate_ops([Op(op="drop_entry", target="s2.e1", reason="space")], c)
+    assert not r.valid and r.violations[0].rule == "coverage" and "FastAPI" in r.violations[0].message
+    assert validate_ops([Op(op="drop_entry", target="s2.e0", reason="space")], c).valid

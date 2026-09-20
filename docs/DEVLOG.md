@@ -248,6 +248,42 @@ That was invisible on the page, which showed a number and left the person to gue
 
 **A score near 100% on a job you don't match is the failure mode**, not the goal: it means the resume claims things that fall apart in the interview. Saying so on the page is better than letting the number look like a bug.
 
+## 20. Tailoring may not lower the score it exists to raise
+
+**Found by the user:** "I see you removed a few bullets from the old resume, thereby decreasing the ATS."
+
+They were right, and the cause was structural. The page-fit loop picks the bullet to drop by
+`(_relevance, -bullet_count, -length)` — a weighted count of job terms in that one bullet — and fit drops
+are appended **after** validation, so nothing checks them at all. Coverage is measured only once the loop
+has finished. Once the zero-relevance bullets run out it simply takes the current minimum, which can be the
+only bullet that mentions a must-have. Worse, `reward()` returned a hard `0.0` for anything over the page
+limit, so an over-long candidate was worthless no matter how good its coverage: the loop had to keep cutting.
+
+**The rule now:** a bullet may only be dropped if every **must-have** keyword it carries is still shown in
+some bullet or the summary afterwards. Nice-to-haves may fall back to the skills list, since they only score
+0.6 there anyway.
+
+- `ats/coverage.py`: `zones_after(doc, ops)` computes the two scoring zones as they *will* read once a set of
+  operations is applied — rewrites substituted, drops removed, additions included — with no apply/re-parse
+  round trip, so it is cheap enough to call inside the validator. `coverage_loss(...)` names the terms a
+  candidate operation would cost.
+- The page fit now builds an ordered list of *permitted* drops (`_fit_candidates`) and walks it, instead of
+  re-picking the same blocked bullet.
+- The validator refuses a model `drop` or `drop_entry` with a new `coverage` rule, in words the model can act
+  on: "Dropping s1.e0.b3 would remove the only mention of 'Celery', which this job requires. Rewrite it to
+  make room instead." The existing retry loop feeds that back, so it self-corrects.
+- **A per-operation guard isn't enough.** A drop can look safe because a second bullet still carries the term,
+  and then a rewrite later in the same plan strips that one too. So the finished plan is also checked as a
+  whole (`_check_coverage`), and the last operation that cost a must-have is rejected — the same shape as the
+  existing stuffing check. A person's own hand-edit (`source="user"`) is never the culprit: their wording wins.
+- `reward()` replaces the hard zero over the page limit with `total * 0.5 ** pages_over`, which keeps the
+  ordering (shorter still wins) without making every long candidate identically worthless.
+- The `bold` arm, which actively tells the model to drop bullets, now says "never the only bullet that
+  mentions a must-have", so retries aren't spent on predictable rejections.
+
+On the user's own resume and job, this protects exactly two bullets — between them they carry every must-have
+that resume can back.
+
 ## Test status
 
-124 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+130 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

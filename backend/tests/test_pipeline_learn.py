@@ -175,3 +175,26 @@ def test_recommended_model():
     assert recommended_model("openai", ["gpt-4o", "gpt-4.1-mini", "gpt-5-mini", "o3"]) == "gpt-5-mini"
     assert recommended_model("anthropic", ["x-sonnet-9", "x-opus-9", "x-haiku-9"]) == "x-opus-9"
     assert recommended_model("mistral", ["mistral-small-latest", "mistral-large-latest"]) == "mistral-large-latest"
+
+
+async def test_tailoring_never_lowers_must_have_coverage(tmp_path):
+    """The regression test for the reported bug: dropping bullets used to cut the score it protects."""
+    greedy = {"ops": [
+        # every drop here would take away the only bullet mentioning a must-have
+        {"op": "drop", "target": "s1.e0.b0", "reason": "not relevant"},
+        {"op": "drop_entry", "target": "s2.e0", "reason": "not relevant"},
+        {"op": "rewrite", "target": "s1.e0.b1", "text": "Cut the p95 latency of the settlement report from 4.2s to 900ms with Redis caching", "reason": "tighter"},
+    ]}
+    llm = MockLLM(ANALYSIS, [greedy])
+    inp = TailorInput(tex=JAKE, jd="We need Python, Kubernetes, REST APIs, PostgreSQL.", evidence=EVIDENCE, compile_pdf=False)
+    result = await tailor(inp, llm, bandit=Bandit(JsonStore("b.json", tmp_path)), style_memory=StyleMemory(JsonStore("s.json", tmp_path)))
+
+    assert result["after"]["must_have"] >= result["before"]["must_have"]
+    assert {b["rule"] for b in result["blocked"]} >= {"coverage"}
+    # the bullet that alone carried Python and REST APIs was refused outright
+    assert "s1.e0.b0" not in {o["target"] for o in result["ops"]}
+    assert any("Python" in b["message"] for b in result["blocked"] if b["rule"] == "coverage")
+    # and every must-have that was shown in a bullet before is still shown in one
+    for k in result["keywords"]:
+        if k["must"] and k["before"] == "context":
+            assert k["after"] == "context", f"{k['term']} slipped out of the bullets"

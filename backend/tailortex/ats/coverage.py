@@ -53,6 +53,65 @@ def zones(doc: ParsedResume) -> tuple[str, str]:
     return clean(context), clean(listed)
 
 
+def zones_after(doc: ParsedResume, ops: list) -> tuple[str, str]:
+    """The same two zones as zones(), but as they will read once `ops` are applied.
+
+    Rewrites are substituted, dropped bullets and entries are left out, added bullets are included.
+    No apply/re-parse round trip, so this is cheap enough to call inside the validator and once per
+    page-fit step.
+    """
+    dropped = {o.target for o in ops if o.op == "drop"}
+    dropped_entries = {o.target for o in ops if o.op == "drop_entry"}
+    rewrites = {o.target: (o.text or "") for o in ops if o.op == "rewrite"}
+    added: dict[str, list[str]] = {}
+    for o in ops:
+        if o.op == "add" and o.text:
+            added.setdefault(o.target, []).append(o.text)
+
+    context: list[str] = []
+    listed: list[str] = []
+    for s in doc.sections:
+        for b in s.blocks:
+            if b.id in dropped:
+                continue
+            text = rewrites.get(b.id, b.text)
+            if b.kind == "summary":
+                context.append(text)
+            else:
+                listed.append(f"{b.label or ''}: {text}")
+        for e in s.entries:
+            if e.id in dropped_entries:
+                continue
+            listed.append(e.heading)
+            context.extend(rewrites.get(b.id, b.text) for b in e.bullets if b.id not in dropped)
+            context.extend(added.get(e.id, []))
+    clean = lambda parts: "\n".join(p.replace("**", "") for p in parts)  # noqa: E731
+    return clean(context), clean(listed)
+
+
+def coverage_loss(doc: ParsedResume, analysis: JobAnalysis, ops: list, candidate, musts_only: bool = True) -> list[str]:
+    """Job terms the resume would stop showing if `candidate` were applied on top of `ops`.
+
+    A must-have has to survive in the context zone (bullets and the summary), where it scores full
+    marks. A nice-to-have may fall back to the listed zone, since it only scores 0.6 there anyway.
+    Used to refuse a drop that would take the last mention of something the job requires.
+    """
+    before_context, before_listed = zones_after(doc, ops)
+    after_context, after_listed = zones_after(doc, [*ops, candidate])
+    lost = []
+    for t, must in analysis.terms():
+        if musts_only and not must:
+            continue
+        if not count_term(before_context, t.term):
+            continue  # it wasn't showing in a bullet to begin with
+        if count_term(after_context, t.term):
+            continue
+        if not must and count_term(after_listed, t.term) and count_term(before_listed, t.term):
+            continue
+        lost.append(t.term)
+    return lost
+
+
 def term_coverage(doc: ParsedResume, analysis: JobAnalysis, pdf_text: str | None = None) -> list[TermCoverage]:
     context, listed = zones(doc)
     out: list[TermCoverage] = []
