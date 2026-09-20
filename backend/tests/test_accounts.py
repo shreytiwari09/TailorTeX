@@ -460,3 +460,39 @@ def test_firebase_links_to_an_existing_account_by_verified_email(client, monkeyp
     assert r.status_code == 200 and r.json()["created"] is False and r.json()["profile"]["id"] == existing["id"]
     assert r.json()["profile"]["account"]["google"] is True
     assert db_rows("select firebase_uid from profiles where email = 'maya@example.com'")[0][0] == "uid-maya"
+
+
+def test_signing_key_set_is_cached_refetches_rarely_and_reports_network_errors(monkeypatch):
+    import httpx
+    from jwt.algorithms import RSAAlgorithm
+
+    from tailortex.db import jwks
+    from tailortex.db.jwks import KeySet
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = {**RSAAlgorithm.to_jwk(private.public_key(), as_dict=True), "kid": "k1", "alg": "RS256", "use": "sig"}
+    calls = []
+
+    def fake_get(url, **_kw):
+        calls.append(url)
+        if len(calls) == 99:
+            raise httpx.ConnectError("offline")
+        return httpx.Response(200, json={"keys": [jwk]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(jwks.httpx, "get", fake_get)
+    keys = KeySet("https://example.test/jwks")
+    token = _firebase_token(private)  # kid k1
+    assert keys.get_signing_key_from_jwt(token).key.public_numbers() == private.public_key().public_numbers()
+    keys.get_signing_key_from_jwt(token)
+    assert len(calls) == 1  # cached
+
+    other = jwt.encode({"a": 1}, private, algorithm="RS256", headers={"kid": "unknown"})
+    for _ in range(3):
+        with pytest.raises(jwt.PyJWKClientError):
+            keys.get_signing_key_from_jwt(other)
+    assert len(calls) == 1  # junk key IDs don't make us refetch every time
+
+    fresh = KeySet("https://example.test/jwks")
+    calls.extend([None] * (98 - len(calls)))  # the next fetch is the failing one
+    with pytest.raises(jwt.PyJWKClientError, match="couldn't fetch"):
+        fresh.get_signing_key_from_jwt(token)

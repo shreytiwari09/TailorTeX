@@ -11,10 +11,11 @@ import asyncio
 import os
 
 import jwt
-from jwt import PyJWKClient
+
+from .jwks import KeySet
 
 JWKS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
-_jwks: PyJWKClient | None = None
+_jwks: KeySet | None = None
 
 
 class FirebaseAuthError(Exception):
@@ -39,10 +40,10 @@ def web_config() -> dict | None:
     }
 
 
-def _keys() -> PyJWKClient:
+def _keys() -> KeySet:
     global _jwks
     if _jwks is None:
-        _jwks = PyJWKClient(JWKS_URL, cache_keys=True, lifespan=3600)
+        _jwks = KeySet(JWKS_URL)
     return _jwks
 
 

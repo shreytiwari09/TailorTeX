@@ -6,11 +6,12 @@ import asyncio
 import os
 
 import jwt
-from jwt import PyJWKClient
+
+from .jwks import KeySet
 
 GOOGLE_CERTS = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
-_jwks: PyJWKClient | None = None
+_jwks: KeySet | None = None
 
 
 class GoogleAuthError(Exception):
@@ -21,10 +22,10 @@ def client_id() -> str | None:
     return os.environ.get("GOOGLE_CLIENT_ID", "").strip() or None
 
 
-def _keys() -> PyJWKClient:
+def _keys() -> KeySet:
     global _jwks
     if _jwks is None:
-        _jwks = PyJWKClient(GOOGLE_CERTS, cache_keys=True, lifespan=3600)
+        _jwks = KeySet(GOOGLE_CERTS)
     return _jwks
 
 
