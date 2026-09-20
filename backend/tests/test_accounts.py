@@ -733,13 +733,15 @@ def test_telling_the_chat_you_have_a_skill_puts_it_on_the_resume_and_in_your_con
     assert r.status_code == 200, r.text
     body = r.json()
     [op] = body["ops"]
-    assert op["op"] == "rewrite" and "PyTorch" in op["text"] and op["evidence"] == ["skills"] and body["handled"] == ["PyTorch"]
+    # their own statement about themselves, so the line is their edit and cites nothing that could go missing
+    assert op["op"] == "rewrite" and "PyTorch" in op["text"] and op["source"] == "user" and op["evidence"] == []
+    assert body["handled"] == ["PyTorch"]
 
     # kept as a skill they can defend, not as a "fact" entry that reads like an instruction
     ctx = client.get("/api/profile/context").json()
     assert "PyTorch" in ctx["skills"] and not [e for e in ctx["entries"] if e["id"].startswith("ans")]
 
-    # applying it is the ordinary rebuild, and it validates because the skill is now confirmed
+    # applying it is the ordinary rebuild, and it still applies however their context has changed since
     done = client.post(f"/api/runs/{run_id}/rebuild", json={"ops": body["ops"], "compile": False}).json()
     assert "PyTorch" in done["tex"] and not done["warnings"]
     assert next(k for k in client.get(f"/api/runs/{run_id}").json()["keywords"] if k["term"] == "PyTorch")["after"] in ("listed", "context")
@@ -763,3 +765,33 @@ def test_the_chat_keeps_work_you_describe_as_context_but_not_a_bare_no(client, m
     yes = client.post(f"/api/runs/{run_id}/chat", json={"message": said}).json()
     assert yes["stored"] is True and yes["evidence"][0]["id"] == "ans1"
     assert next(e for e in client.get("/api/profile/context").json()["entries"] if e["id"] == "ans1")["text"] == said
+
+
+@needs_db
+def test_ticking_the_skills_a_job_wants_changes_the_file_and_survives_apply_and_reload(client, monkeypatch):
+    """The reported failure end to end: add the skills, press Apply, reload, and find nothing had changed."""
+    from tailortex.api import account
+
+    signup(client)
+    client.put("/api/profile/resume", json={"tex": JAKE})
+    llm = MockLLM(ANALYSIS, [GOOD_PLAN])
+    monkeypatch.setattr(account, "llm_for", lambda profile: llm)
+    run = _stream(client, "/api/runs", {"jd": "Backend role: Python, Kubernetes, REST APIs", "compile": False})[-1]
+    rid = run["saved_run_id"]
+
+    picked = client.post(f"/api/runs/{rid}/skills", json={"terms": ["Kubernetes", "Terraform"], "ops": run["ops"]})
+    assert picked.status_code == 200, picked.text
+    body = picked.json()
+    assert body["ops"] and not body["blocked"], body
+    # it is the person's own edit, so nothing it cites can go missing later
+    assert all(o["source"] == "user" and o["evidence"] == [] for o in body["ops"])
+
+    plain = client.post(f"/api/runs/{rid}/rebuild", json={"ops": run["ops"], "compile": False}).json()
+    applied = client.post(f"/api/runs/{rid}/rebuild", json={"ops": [*run["ops"], *body["ops"]], "compile": False}).json()
+    assert applied["ats"] > plain["ats"]  # the number the person is shown actually moves
+    assert not [w for w in applied["warnings"] if "Evidence" in w], applied["warnings"]
+    assert "Terraform" in applied["tex"]
+
+    reloaded = client.get(f"/api/runs/{rid}").json()
+    assert "Terraform" in reloaded["tex"]  # the file the person gets back has it
+    assert any(o["source"] == "user" for o in reloaded["accepted_ops"])  # and the page can show it as accepted

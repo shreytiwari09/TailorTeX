@@ -12,7 +12,7 @@ from conftest import MockLLM
 from tailortex.compile.compile import compile_latex, tex_available
 from tailortex.latex.parse import parse_resume
 from tailortex.ops import Op
-from tailortex.pipeline.tailor import add_skills, chat_turn
+from tailortex.pipeline.tailor import add_skills, chat_turn, rebuild
 from tailortex.types import EvidenceItem, JobAnalysis, JobTerm
 
 JAKE = (Path(__file__).parents[1] / "tailortex" / "templates" / "jake" / "resume.tex").read_text()
@@ -46,7 +46,8 @@ def test_having_a_skill_with_no_project_adds_it_to_skills_and_writes_no_bullet()
                    {"reply": "Added PyTorch to your Frameworks & Libraries.", "skills": [{"term": "PyTorch", "line": "s0.k1"}], "handled": ["PyTorch"]})
     assert llm.chat_calls == 1
     [op] = out["ops"]
-    assert op["op"] == "rewrite" and op["target"] == "s0.k1" and op["source"] == "model" and op["evidence"] == ["skills"]
+    # their own list, their own edit: stamped that way so it still applies when the resume is rebuilt later
+    assert op["op"] == "rewrite" and op["target"] == "s0.k1" and op["source"] == "user" and op["evidence"] == []
     assert op["text"] == "LangChain \u2022 CrewAI \u2022 FAISS \u2022 PyTorch"  # the line's own bullet separator, nothing else changed
     assert out["projects"] == [] and not out["blocked"] and out["handled"] == ["PyTorch"]
     assert "PyTorch" in out["reply"]
@@ -208,3 +209,35 @@ def test_a_skill_goes_on_the_line_it_fits_by_meaning_not_the_first_one():
 def test_when_no_skills_line_can_be_edited_the_person_gets_code_to_paste():
     out = pick(["PyTorch"], tex=JAKE.replace("\\section{Technical Skills}", "\\section{Stack}"))
     assert out["ops"] == [] or out["manual"]
+
+
+# --- a change that was accepted must still be there after Apply and after a reload ---------------
+
+
+def _rebuilt(tex, ops, evidence=None):
+    return asyncio.run(rebuild(tex, ops, ANALYSIS, evidence or [], compile_pdf=False))
+
+
+def test_picked_skills_survive_the_rebuild_with_no_evidence_left_to_cite():
+    """The reported failure: adding skills changed nothing, because on Apply the op cited evidence the
+    rebuild no longer had, and was dropped into a warning nobody read."""
+    out = pick(UNBACKED)
+    r = _rebuilt(BULLETED, [Op.model_validate(o) for o in out["ops"]])
+    assert len(r["applied"]) == 1 and not r["warnings"]
+    assert "PyTorch \\textbullet{} TensorFlow \\textbullet{} Statistics" in r["tex"]
+    assert r["after"]["must_have"] > 0  # and the score it is measured on actually moves
+
+
+def test_a_skill_stated_in_the_chat_also_survives_the_rebuild():
+    out, _ = say("I know PyTorch", {"skills": [{"term": "PyTorch", "line": "s0.k1"}], "handled": ["PyTorch"]})
+    r = _rebuilt(BULLETED, [Op.model_validate(o) for o in out["ops"]])
+    assert len(r["applied"]) == 1 and not r["warnings"] and "PyTorch" in r["tex"]
+
+
+def test_a_bullet_the_model_wrote_is_never_stamped_as_the_persons_own_edit():
+    """source="user" turns off every fabrication check, so it may only ever mark text the person supplied."""
+    out, _ = say("I built a churn model in PyTorch that cut manual review",
+                 {"reply": "Added.", "skills": [{"term": "PyTorch", "line": "s0.k1"}],
+                  "ops": [{"op": "add", "target": "s1.e0", "text": "Built a churn model in PyTorch that cut manual review", "evidence": ["ans1"], "reason": "you said so"}],
+                  "handled": ["PyTorch"]})
+    assert [o["source"] for o in out["ops"] if o["op"] == "add"] == ["model"]

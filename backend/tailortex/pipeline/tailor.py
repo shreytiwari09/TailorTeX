@@ -897,6 +897,12 @@ async def add_skills(source_tex: str, analysis: JobAnalysis, evidence: list[Evid
     carried = [t for o in accepted if o.op == "rewrite" and doc.block(o.target) and doc.block(o.target).kind == "skills" for t in skill_items(o.text or "")]
     confirmed = EvidenceItem(id="skills", source="skill", title="Skills the candidate can defend in an interview", skills=[*(known.skills if known else []), *carried, *placed])
     checked = validate_ops(ops, ValidationContext(doc=doc, evidence=[*(e for e in evidence if e.id != "skills"), confirmed], analysis=analysis))
+    # The person picked these terms from the job's own list, so the line is their edit, not the model's. Saying
+    # so keeps it valid when the resume is rebuilt later, instead of depending on the skills evidence still
+    # being there: a change that was accepted must never quietly vanish on Apply.
+    for o in checked.valid:
+        o.source = "user"
+        o.evidence = []
     return {
         "ops": [o.model_dump() for o in checked.valid],
         "changes": describe_changes(doc, checked.valid, analysis),
@@ -956,6 +962,13 @@ async def chat_turn(
             snippets.append(await _project_snippet(doc, analysis, stub, item, good, current_tex or source_tex, page_limit, info))
 
     valid = checked.valid
+    # A skill the person stated is their own edit to their own list: stamping it so keeps it valid when the
+    # resume is rebuilt, instead of depending on their confirmed-skills evidence still holding the term.
+    # Bullets the model wrote stay source="model", so every fabrication check still applies to them.
+    theirs = {o.target for o in skill_ops}
+    for o in valid:
+        if o.op == "rewrite" and o.target in theirs:
+            o.source, o.evidence = "user", []
     match = lambda names: [next((u for u in unbacked if same_term(u, n)), n) for n in names]  # noqa: E731
     handled = match([*turn.handled, *(s.term for s in turn.skills), *turn.skipped])
     narrative = any(o.op == "add" for o in valid) or bool(snippets)  # work they described, worth keeping as context

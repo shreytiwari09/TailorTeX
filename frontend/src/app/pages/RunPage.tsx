@@ -58,10 +58,12 @@ export function RunPage() {
         for (const c of r.changes) if (!kept.has(`${c.op}|${c.target}`)) restored[c.id] = { action: 'reverted' }
         setDecisions(restored)
         setBuilt(restored)
-        // Bullets the person added from their own answers come back among the accepted ops.
-        const fromAnswers = r.accepted_ops.filter((o) => o.evidence.some((e) => /^ans\d+$/.test(e)))
-        setExtra(fromAnswers)
-        setBuiltExtra(fromAnswers)
+        // Everything they added themselves — a skills line, a bullet written from their own words — is an
+        // accepted op that was never one of the run's own suggestions, so it comes back by not matching one.
+        const suggested = new Set(r.changes.map((c) => `${c.op}|${c.target}`))
+        const mine = r.accepted_ops.filter((o) => !suggested.has(`${o.op}|${o.target}`))
+        setExtra(mine)
+        setBuiltExtra(mine)
       }
     }).catch((e: Error) => alive && setError(e.message))
     acct.context().then((c) => alive && setContext(c.entries)).catch(() => undefined)

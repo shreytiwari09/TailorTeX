@@ -667,3 +667,16 @@ turn, then drip-fed the rest one question at a time.
 - **A reply can no longer claim an addition that didn't happen**: if nothing was added, it says so and why.
 - **The estimate moves when a chat change is accepted.** It only counted the suggestions from the run itself,
   so accepting a skills line changed nothing on screen until Apply.
+
+### Why adding a skill changed nothing
+
+The op was written with `evidence=["skills"]`, which exists only while the person's confirmed-skills list
+still holds that term. On Apply the resume is rebuilt from the original source and validated again, the
+evidence wasn't there, and the op was dropped into a warning nobody reads: no change to the file, no change
+to the score, and nothing left after a reload.
+
+A skill the person ticked from the job's own list, or stated in their own words, is their edit to their own
+list. It is now stamped `source="user"` with no citation, so it applies on every rebuild. Bullets the model
+writes still keep `source="model"` and every fabrication check, and there is a test that says so. The result
+page also lost accepted chat changes on reload, because it only restored ops citing an answer; it now restores
+anything accepted that wasn't one of the run's own suggestions.
