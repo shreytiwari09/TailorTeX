@@ -144,3 +144,19 @@ def test_the_model_is_told_the_whole_conversation_and_which_skills_are_unbacked(
     _, llm = say("I know PyTorch", {"handled": []}, history=[{"role": "assistant", "text": "Have you used PyTorch?"}])
     prompt = next(u for _s, u in llm.prompts if "<conversation>" in u)
     assert "assistant: Have you used PyTorch?" in prompt and "PyTorch; TensorFlow; Statistics" in prompt and 'asked_about="PyTorch"' in prompt
+
+
+def test_add_all_adds_the_skills_the_assistant_listed_even_though_the_person_didnt_type_them():
+    """The reported failure: "add all to skills" said 'added', but nothing changed, because the names were the assistant's words."""
+    out, _ = say("add all to skills", {"reply": "Added them.", "skills": [{"term": "PyTorch", "line": "s0.k1"}, {"term": "TensorFlow", "line": "s0.k1"}], "handled": ["PyTorch", "TensorFlow"]}, focus=None)
+    assert [o["text"] for o in out["ops"]] == ["LangChain • CrewAI • FAISS • PyTorch • TensorFlow"]
+
+
+def test_a_skill_the_job_never_listed_and_the_person_never_said_is_still_refused_after_add_all():
+    out, _ = say("add all to skills", {"reply": "Added.", "skills": [{"term": "Kubernetes", "line": "s0.k1"}], "handled": []}, focus=None)
+    assert out["ops"] == []
+
+
+def test_the_reply_never_claims_an_addition_that_didnt_happen():
+    out, _ = say("add Kubernetes", {"reply": "I have added Kubernetes to your skills.", "skills": [{"term": "Kubernetes", "line": "s0.k1"}], "handled": []}, focus=None)
+    assert out["ops"] == [] and out["reply"].startswith("I didn't change your resume")

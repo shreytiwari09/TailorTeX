@@ -813,7 +813,7 @@ async def _project_snippet(doc: ParsedResume, analysis: JobAnalysis, answer: Ans
 
 
 
-def _skill_ops(doc: ParsedResume, accepted: list[Op], adds, item: EvidenceItem) -> tuple[list[Op], list[str], list[dict], list[dict]]:
+def _skill_ops(doc: ParsedResume, accepted: list[Op], adds, item: EvidenceItem, offered: list[str] | None = None) -> tuple[list[Op], list[str], list[dict], list[dict]]:
     """Put the skills a person says they have onto a Skills line.
 
     Built here rather than left to the model, so the line keeps its own separator and nothing else on it
@@ -832,7 +832,8 @@ def _skill_ops(doc: ParsedResume, accepted: list[Op], adds, item: EvidenceItem) 
         term = a.term.strip()
         if not term:
             continue
-        if not (contains_term(item.text, term) or _said(item.text, term)):
+        # a skill the assistant itself offered from the job's list counts once the person says to add it ("add all")
+        if not (contains_term(item.text, term) or _said(item.text, term) or any(same_term(term, o) for o in offered or [])):
             refused.append({"op": f"skill {term}", "rule": "invented_term", "message": f"'{term}' isn't in what you told me, so I didn't add it.", "text": term})
             continue
         already = contains_term(resume_text, term) or any(contains_term(t, term) for t in rewritten.values()) or any(
@@ -874,7 +875,7 @@ async def chat_turn(
 
     turn = await llm.complete(chat_system(doc.bullet_budget), chat_user(doc, overlay, analysis, unbacked, history, item.id, message, focus), ChatTurn)
 
-    skill_ops, notes, manual, refused = _skill_ops(doc, accepted, turn.skills, item)
+    skill_ops, notes, manual, refused = _skill_ops(doc, accepted, turn.skills, item, unbacked)
     stated = [t for o in skill_ops for t in skill_items(o.text or "") if any(same_term(t, a.term) for a in turn.skills)]
     if stated:
         # what the person says they can do is theirs to say: it joins the skills they've confirmed
@@ -917,6 +918,10 @@ async def chat_turn(
         reply = (reply + " " if reply else "") + f"I couldn't edit your Skills lines automatically. Add {names} to your Skills section in Overleaf; the code is below."
     if asked and not reply:
         reply = asked
+    if turn.skills and not (skill_ops or manual):
+        # the model said it added something; nothing was, so say what actually happened
+        why = "; ".join(dict.fromkeys([*notes, *(b["message"] for b in refused)])) or "there was nothing new to add"
+        reply = f"I didn't change your resume: {why}."
     return {
         "reply": reply or ("Done." if produced else "Tell me a little more about what you'd like on your resume."),
         "ops": [o.model_dump() for o in valid],
