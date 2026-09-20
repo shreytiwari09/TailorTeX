@@ -30,6 +30,8 @@ class Profile(Base):
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
     password_hash: Mapped[str | None] = mapped_column(String(300))
     google_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    firebase_uid: Mapped[str | None] = mapped_column(String(128), unique=True)
+    sign_in_provider: Mapped[str | None] = mapped_column(String(40))  # google.com, password, ...
     avatar_url: Mapped[str | None] = mapped_column(Text)
     # personal details
     full_name: Mapped[str] = mapped_column(Text, default="")

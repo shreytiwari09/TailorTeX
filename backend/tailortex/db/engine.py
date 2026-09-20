@@ -46,6 +46,13 @@ async def init_db() -> None:
     async with _engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # tables created by an earlier version get the newer columns
+        for statement in (
+            "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS firebase_uid VARCHAR(128)",
+            "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS sign_in_provider VARCHAR(40)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_profiles_firebase_uid ON profiles (firebase_uid)",
+        ):
+            await conn.execute(text(statement))
 
 
 async def dispose() -> None:

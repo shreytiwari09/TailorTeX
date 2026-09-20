@@ -62,8 +62,14 @@ No configuration is needed. The secret that encrypts saved model keys is generat
 | `make db` | Start just the database |
 | API docs | http://localhost:8000/docs (interactive, from FastAPI) |
 
-Settings (all optional) are in [.env.example](.env.example): `DATABASE_URL`, `APP_SECRET`, `GOOGLE_CLIENT_ID` (adds a "Continue with Google" button), a shared `TAILORTEX_API_KEY` for the demo, and the TeX location.
+Settings (all optional) are in [.env.example](.env.example): `DATABASE_URL`, `APP_SECRET`, the `FIREBASE_*` sign-in settings (see below), a shared `TAILORTEX_API_KEY` for the demo, and the TeX location.
 
+
+## Sign-in
+
+Sign-in goes through **Firebase Authentication**: Continue with Google, or email and password with a verified address (Firebase sends the verification and password-reset emails). The browser signs in with Firebase and sends the ID token to the server, which checks it against Google's public keys (signature, expiry, project, verified email) and then issues its **own** session cookie (HttpOnly, only a hash stored). Firebase is only the front door; **all data stays in PostgreSQL**. A first sign-in with an email that already has an account links to it.
+
+To turn it on, create a Firebase project, enable the Google and Email/Password providers, register a web app, and put its `firebaseConfig` values in `.env` as `FIREBASE_PROJECT_ID`, `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN` and `FIREBASE_APP_ID` (step by step in [docs/DEVLOG.md](docs/DEVLOG.md), section 14). These values are public identifiers, and no service-account key is needed. When they aren't set, the app falls back to its own email and password sign-up, so a fresh clone still works. The demo needs no sign-in either way.
 
 ## How it works
 
@@ -169,7 +175,7 @@ Your resume, job description and context are sent to the model provider you choo
 
 ## Security and privacy
 
-- **Passwords** are stored as scrypt hashes; **session tokens** as SHA-256 hashes. Sign-in is rate limited.
+- **Sign-in** goes through Firebase when it is configured, so passwords never reach this server. In the built-in fallback, passwords are scrypt hashes. **Session tokens** are stored as SHA-256 hashes, and sign-in is rate limited.
 - **Model keys** are encrypted at rest and never returned by the API. In the no-login demo a key stays in your browser.
 - **Compiling LaTeX runs code**, so documents that write files, run shell commands, read files outside the project or run Lua are refused before TeX starts. TeX runs with shell escape off, paranoid file access, a fresh temp folder and a timeout.
 - **Web pages you add are fetched safely:** only http(s), and private, loopback and cloud-metadata addresses are refused, including after redirects.
@@ -178,7 +184,6 @@ Your resume, job description and context are sent to the model provider you choo
 
 ## Roadmap
 
-- Firebase Authentication (Google and email link) in place of the built-in sign-in. A working version is on the `firebase-auth` branch.
 - Application tracking (interviewing, archived) on the dashboard, and callbacks as a learning signal.
 - The new design for the no-login demo, a dark theme, and mobile polish.
 - A small open model fine-tuned on accepted edits, so tailoring works without a key.

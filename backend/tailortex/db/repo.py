@@ -67,7 +67,7 @@ DEMO_DAYS = 2
 
 
 def is_demo(profile: Profile) -> bool:
-    return not (profile.email or profile.google_sub or profile.password_hash)
+    return not (profile.email or profile.google_sub or profile.password_hash or profile.firebase_uid)
 
 
 async def start_demo(db: AsyncSession, sample: dict) -> tuple[Profile, str]:
@@ -84,7 +84,7 @@ async def start_demo(db: AsyncSession, sample: dict) -> tuple[Profile, str]:
 async def purge_demos(db: AsyncSession) -> int:
     """Demo workspaces (no email, no password, no Google) are deleted after DEMO_DAYS days."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=DEMO_DAYS)
-    gone = await db.execute(delete(Profile).where(Profile.email.is_(None), Profile.google_sub.is_(None), Profile.password_hash.is_(None), Profile.created_at < cutoff))
+    gone = await db.execute(delete(Profile).where(Profile.email.is_(None), Profile.google_sub.is_(None), Profile.password_hash.is_(None), Profile.firebase_uid.is_(None), Profile.created_at < cutoff))
     return gone.rowcount or 0
 
 
@@ -107,6 +107,31 @@ async def sign_in_google(db: AsyncSession, claims: dict) -> tuple[Profile, str, 
             db.add(profile)
             created = True
         profile.google_sub = sub
+    if not profile.full_name and claims.get("name"):
+        profile.full_name = str(claims["name"])[:200]
+    if claims.get("picture"):
+        profile.avatar_url = str(claims["picture"])[:1000]
+    await db.flush()
+    return profile, await _new_session(db, profile), created
+
+
+async def sign_in_firebase(db: AsyncSession, claims: dict) -> tuple[Profile, str, bool]:
+    """(profile, session token, created). Finds the person by Firebase UID, else by verified email, else creates them.
+
+    The token was verified and its email is verified (see db/firebase.py), so linking by email is safe: only
+    the owner of that mailbox can get here.
+    """
+    uid, email = str(claims["sub"]), str(claims["email"]).lower()
+    profile = await db.scalar(select(Profile).where(Profile.firebase_uid == uid))
+    created = False
+    if profile is None:
+        profile = await db.scalar(select(Profile).where(Profile.email == email))
+        if profile is None:
+            profile = Profile(email=email, public_email=email)
+            db.add(profile)
+            created = True
+        profile.firebase_uid = uid
+    profile.sign_in_provider = str((claims.get("firebase") or {}).get("sign_in_provider") or "")[:40] or profile.sign_in_provider
     if not profile.full_name and claims.get("name"):
         profile.full_name = str(claims["name"])[:200]
     if claims.get("picture"):
@@ -178,7 +203,7 @@ async def profile_payload(db: AsyncSession, profile: Profile) -> dict:
     )).all())
     return {
         "id": str(profile.id),
-        "account": {"email": profile.email, "google": bool(profile.google_sub), "password": bool(profile.password_hash), "avatar_url": profile.avatar_url, "demo": is_demo(profile)},
+        "account": {"email": profile.email, "google": bool(profile.google_sub) or profile.sign_in_provider == "google.com", "password": bool(profile.password_hash) or profile.sign_in_provider == "password", "avatar_url": profile.avatar_url, "demo": is_demo(profile)},
         "details": {**{f: getattr(profile, f) for f in DETAIL_FIELDS}, "links": profile.links or {}},
         "resume_tex": profile.resume_tex,
         "notes": profile.notes,

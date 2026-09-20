@@ -34,6 +34,7 @@ def client(monkeypatch):
     monkeypatch.setenv("APP_SECRET", "test-secret-for-model-keys")
     monkeypatch.setenv("TAILORTEX_EMBEDDINGS", os.environ.get("TAILORTEX_TEST_EMBEDDINGS", "hashed"))
     monkeypatch.setenv("TAILORTEX_API_KEY", "")
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "")  # the built-in sign-in, whatever .env says
     main._hits.clear()
 
     async def reset():
@@ -356,3 +357,106 @@ def test_demo_workspace_is_prefilled_private_and_expires(client):
     assert db_rows("select count(*) from profiles")[0][0] == 2  # the real account and the new demo
     client.cookies.set("tt_session", old_cookie)
     assert client.get("/api/auth/me").json()["signed_in"] is False
+
+
+# --- Firebase sign-in --------------------------------------------------------------------------------
+
+FIREBASE_PROJECT = "tailortex-test"
+
+
+def _firebase_token(key, **claims):
+    now = int(time.time())
+    base = {"iss": f"https://securetoken.google.com/{FIREBASE_PROJECT}", "aud": FIREBASE_PROJECT, "sub": "uid-1", "email": "asha@example.com",
+            "email_verified": True, "iat": now, "exp": now + 600, "firebase": {"sign_in_provider": "password"}}
+    return jwt.encode({**base, **claims}, key, algorithm="RS256", headers={"kid": "k1"})
+
+
+def _fake_firebase_keys(monkeypatch, private):
+    from tailortex.db import firebase
+
+    class Keys:
+        def get_signing_key_from_jwt(self, _token):
+            return type("K", (), {"key": private.public_key()})()
+
+    monkeypatch.setattr(firebase, "_keys", lambda: Keys())
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", FIREBASE_PROJECT)
+
+
+def test_firebase_token_verification(monkeypatch):
+    from tailortex.db import firebase
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _fake_firebase_keys(monkeypatch, private)
+    assert firebase.verify_sync(_firebase_token(private))["sub"] == "uid-1"
+    now = int(time.time())
+    for bad in (
+        _firebase_token(private, aud="another-project"),
+        _firebase_token(private, iss="https://securetoken.google.com/another-project"),
+        _firebase_token(private, exp=now - 10),
+        _firebase_token(private, email_verified=False),
+        _firebase_token(private, email=None),
+        _firebase_token(private, sub=""),
+        _firebase_token(rsa.generate_private_key(public_exponent=65537, key_size=2048)),
+        "not-a-token",
+    ):
+        with pytest.raises(firebase.FirebaseAuthError):
+            firebase.verify_sync(bad)
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "")
+    with pytest.raises(firebase.FirebaseAuthError, match="isn't set up"):
+        firebase.verify_sync(_firebase_token(private))
+
+
+def test_firebase_web_config(monkeypatch):
+    from tailortex.db import firebase
+
+    for name in ("FIREBASE_PROJECT_ID", "FIREBASE_API_KEY", "FIREBASE_AUTH_DOMAIN", "FIREBASE_APP_ID"):
+        monkeypatch.setenv(name, "")
+    assert firebase.web_config() is None
+    monkeypatch.setenv("FIREBASE_PROJECT_ID", "demo-proj")
+    assert firebase.web_config() is None  # needs the API key too
+    monkeypatch.setenv("FIREBASE_API_KEY", "AIza-public")
+    assert firebase.web_config() == {"apiKey": "AIza-public", "authDomain": "demo-proj.firebaseapp.com", "projectId": "demo-proj", "appId": None}
+
+
+@needs_db
+def test_firebase_sign_in_creates_reuses_and_links(client, monkeypatch):
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _fake_firebase_keys(monkeypatch, private)
+    monkeypatch.setenv("FIREBASE_API_KEY", "AIza-public")
+    assert client.get("/api/auth/config").json()["firebase"]["projectId"] == FIREBASE_PROJECT
+
+    first = client.post("/api/auth/firebase", json={"id_token": _firebase_token(private, name="Asha Rao", picture="https://x.test/a.png")})
+    assert first.status_code == 200 and first.json()["created"] is True
+    assert "tt_session" in first.cookies and "httponly" in first.headers["set-cookie"].lower()
+    profile = first.json()["profile"]
+    assert profile["account"]["email"] == "asha@example.com" and profile["details"]["full_name"] == "Asha Rao"
+    assert client.get("/api/auth/me").json()["signed_in"] is True
+
+    # the same Firebase user again is the same profile, even if the email changed
+    client.post("/api/auth/signout")
+    again = client.post("/api/auth/firebase", json={"id_token": _firebase_token(private, email="asha.new@example.com")}).json()
+    assert again["created"] is False and again["profile"]["id"] == profile["id"]
+
+    # someone new with an unverified email is turned away, and nothing is created
+    client.post("/api/auth/signout")
+    rejected = client.post("/api/auth/firebase", json={"id_token": _firebase_token(private, sub="uid-2", email="ravi@example.com", email_verified=False)})
+    assert rejected.status_code == 401 and "Verify your email" in rejected.json()["detail"]
+    assert db_rows("select count(*) from profiles where email = 'ravi@example.com'")[0][0] == 0
+    assert client.get("/api/auth/me").json()["signed_in"] is False
+
+    # with Firebase on, the built-in sign-up and sign-in are closed
+    for path in ("signup", "signin"):
+        assert client.post(f"/api/auth/{path}", json={"email": "x@example.com", "password": "long enough pw"}).status_code == 400
+    assert client.post("/api/auth/google", json={"credential": "x"}).status_code == 400
+
+
+@needs_db
+def test_firebase_links_to_an_existing_account_by_verified_email(client, monkeypatch):
+    existing = signup(client, "maya@example.com")  # made with the built-in sign-in before Firebase was switched on
+    client.post("/api/auth/signout")
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _fake_firebase_keys(monkeypatch, private)
+    r = client.post("/api/auth/firebase", json={"id_token": _firebase_token(private, sub="uid-maya", email="Maya@Example.com", firebase={"sign_in_provider": "google.com"})})
+    assert r.status_code == 200 and r.json()["created"] is False and r.json()["profile"]["id"] == existing["id"]
+    assert r.json()["profile"]["account"]["google"] is True
+    assert db_rows("select firebase_uid from profiles where email = 'maya@example.com'")[0][0] == "uid-maya"

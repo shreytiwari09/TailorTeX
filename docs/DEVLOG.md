@@ -151,6 +151,29 @@ What was built during HackDevengers 2.0, the decisions made along the way, and w
 
 The old page (`/demo.html`) stays only as a fallback for when the server has no database.
 
+## 14. Sign-in through Firebase Authentication
+
+**Decision:** the earlier "Firebase later" call was reversed: sign-in now goes through Firebase Authentication, and only sign-in. The user's words were "we only want auth from firebase", so **every table stays in PostgreSQL**; Firebase never holds resumes, context or keys.
+
+**How it works:**
+1. The browser signs in with the Firebase web SDK: Google in a popup, or email and password.
+2. Email and password need a verified address. Firebase sends the verification email; the screen says "Check your email" and continues after "I've verified my email". Password reset is Firebase's own email too. Google accounts are verified already.
+3. The browser sends the Firebase **ID token** to `POST /api/auth/firebase`. The server checks the signature against Google's public `securetoken` keys, that it was issued for **this** Firebase project (audience and issuer), that it hasn't expired, and that the email is verified. No service-account key is needed, only the project ID.
+4. The server finds the person by Firebase UID, else by that verified email (so an existing account is linked, not duplicated), else creates them, and then issues **its own session cookie** (HttpOnly, only the token's hash stored). From then on nothing talks to Firebase; Firebase's state in the browser is in memory only and is signed out straight after the exchange.
+
+**Why our own session and not Firebase's token on every request:** requests stay independent of Firebase (its outage or a token refresh can't sign anyone out mid-run), sign-out really ends the session, and the existing data and privacy tests keep applying unchanged.
+
+**Why a verified email is required:** linking accounts by email is only safe if the person owns the mailbox. Without the check, someone could register a Firebase account with your address and be linked to your profile.
+
+**When Firebase is on it is the only way in:** the built-in sign-up, sign-in and direct Google routes answer 400, so email verification can't be bypassed. When the `FIREBASE_*` settings are empty the app falls back to its own email and password, so a fresh clone works without a Firebase project. Tests cover both, and cover a wrong project, an expired token, an unverified email and a wrong signing key.
+
+**Set up (once):**
+1. console.firebase.google.com → **Add project** (Analytics off).
+2. **Build → Authentication → Get started → Sign-in method:** enable **Google** (pick a support email) and **Email/Password**.
+3. **Project settings (gear) → General → Your apps → Web (`</>`)**: register an app (skip Hosting) and copy `firebaseConfig`.
+4. Put `apiKey`, `authDomain`, `projectId` and `appId` in `.env` as `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID` and `FIREBASE_APP_ID`, then restart the backend. These are public identifiers.
+5. **Authentication → Settings → Authorized domains:** `localhost` is there already; add the deployed domain when there is one.
+
 ## Test status
 
-105 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+109 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

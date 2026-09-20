@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..compile.compile import UnsafeLatexError
 from ..db import engine, repo
+from ..db.firebase import FirebaseAuthError, project_id as firebase_project, verify as firebase_verify, web_config
 from ..db.google import GoogleAuthError, client_id, verify
 from ..db.models import Profile
 from ..db.rank import make_ranker
@@ -104,11 +105,35 @@ class SignInIn(BaseModel):
 
 @router.get("/auth/config")
 async def auth_config():
-    return {"accounts": engine.enabled(), "google_client_id": client_id()}
+    return {"accounts": engine.enabled(), "google_client_id": client_id(), "firebase": web_config()}
+
+
+class FirebaseIn(BaseModel):
+    id_token: str = Field(max_length=5000)
+
+
+def _builtin_only() -> None:
+    """When Firebase is set up it is the only way in, so its email verification can't be bypassed."""
+    if firebase_project():
+        raise HTTPException(400, "Sign in with the buttons on the home page.")
+
+
+@router.post("/auth/firebase")
+async def auth_firebase(body: FirebaseIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    """Exchange a Firebase ID token (Google, or email and password with a verified address) for our own session cookie."""
+    core.rate_limit(request, "auth")
+    try:
+        claims = await firebase_verify(body.id_token)
+    except FirebaseAuthError as e:
+        raise HTTPException(401, str(e)) from None
+    profile, token, created = await repo.sign_in_firebase(db, claims)
+    _set_cookie(request, response, token)
+    return {"created": created, "profile": await repo.profile_payload(db, profile)}
 
 
 @router.post("/auth/google")
 async def auth_google(body: GoogleIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    _builtin_only()
     core.rate_limit(request, "auth")
     try:
         claims = await verify(body.credential)
@@ -121,6 +146,7 @@ async def auth_google(body: GoogleIn, request: Request, response: Response, db: 
 
 @router.post("/auth/signup")
 async def auth_signup(body: SignUpIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    _builtin_only()
     core.rate_limit(request, "auth")
     try:
         profile, token = await repo.sign_up(db, body.email, body.password, body.full_name)
@@ -142,6 +168,7 @@ async def auth_demo(request: Request, response: Response, db: AsyncSession = Dep
 
 @router.post("/auth/signin")
 async def auth_signin(body: SignInIn, request: Request, response: Response, db: AsyncSession = Depends(db_session)):
+    _builtin_only()
     core.rate_limit(request, "auth")
     try:
         profile, token = await repo.sign_in(db, body.email, body.password)

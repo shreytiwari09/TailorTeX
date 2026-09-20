@@ -26,6 +26,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return res.json() as Promise<T>
 }
 
+export type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId: string | null }
 export type Links = { linkedin?: string; github?: string; portfolio?: string; other?: string }
 export type Profile = {
   id: string
@@ -57,10 +58,11 @@ export type LinkImport = { source: string; link: string; added: number; error: s
 export type ModelList = { model: Profile['model']; models: { id: string; label: string }[]; recommended: string | null }
 
 export const acct = {
-  config: () => req<{ accounts: boolean; google_client_id: string | null }>('GET', '/api/auth/config'),
+  config: () => req<{ accounts: boolean; google_client_id: string | null; firebase: FirebaseConfig | null }>('GET', '/api/auth/config'),
   me: () => req<AuthState>('GET', '/api/auth/me'),
   signUp: (email: string, password: string, full_name: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/signup', { email, password, full_name }),
   signIn: (email: string, password: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/signin', { email, password }),
+  firebase: (id_token: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/firebase', { id_token }),
   google: (credential: string) => req<{ created: boolean; profile: Profile }>('POST', '/api/auth/google', { credential }),
   demo: () => req<{ created: boolean; profile: Profile; jd: string }>('POST', '/api/auth/demo'),
   signOut: () => req<{ ok: boolean }>('POST', '/api/auth/signout'),

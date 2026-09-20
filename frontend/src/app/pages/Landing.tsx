@@ -1,9 +1,11 @@
-import { useCallback, useState, type FormEvent } from 'react'
+import { Suspense, lazy, useCallback, useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { ApiError } from '../../api'
 import { useAuth } from '../auth'
 import { GoogleButton } from '../GoogleButton'
-import { Badge, Button, Icon, InfoTip, Logo, Notice } from '../ui'
+import { Badge, Button, Icon, InfoTip, Logo, Notice, Skeleton } from '../ui'
+
+const FirebaseSignIn = lazy(() => import('../FirebaseSignIn')) // the Firebase SDK is only loaded when sign-in goes through it
 
 export function Landing() {
   const auth = useAuth()
@@ -38,6 +40,11 @@ export function Landing() {
       setDemoBusy(false)
       fail(err)
     }
+  }
+
+  const firebaseIn = async (idToken: string) => {
+    const p = await auth.signInFirebase(idToken)
+    after(p.onboarded)
   }
 
   if (auth.status === 'in' && auth.profile && !demoBusy) return <Navigate to={auth.profile.onboarded ? '/dashboard' : '/onboarding/about'} replace />
@@ -87,7 +94,12 @@ export function Landing() {
               {!auth.accounts && auth.status !== 'loading' && (
                 <Notice tone="warn" className="w-full text-left">Accounts aren't switched on for this server. You can still try the demo.</Notice>
               )}
-              {auth.accounts && (
+              {auth.accounts && auth.firebase && (
+                <Suspense fallback={<Skeleton className="h-56 w-full" />}>
+                  <FirebaseSignIn config={auth.firebase} onIdToken={firebaseIn} />
+                </Suspense>
+              )}
+              {auth.accounts && !auth.firebase && (
                 <>
                   {auth.googleClientId && (
                     <>
