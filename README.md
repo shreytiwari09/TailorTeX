@@ -24,6 +24,31 @@ docker compose up --build      # first build takes a few minutes: it includes Te
 
 Prefer to run it from source? `make setup && make dev`, then open http://localhost:5173 (needs Python 3.11+, Node 20+, and Docker for the database).
 
+**Before you start, three things worth knowing**
+
+- **You need a model key to run a tailoring.** Without one you can explore the demo, but nothing gets tailored. Any of Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek works; the provider is detected from the key. Or set `TAILORTEX_API_KEY` in a `.env` file (copy `.env.example`) to supply one for everyone using your instance.
+- **Free tiers are small.** Google's free Gemini allowance is roughly 20 requests per model per day, and one tailoring plus a few chat turns can use a good share of it. TailorTeX retries when a provider is busy and switches to another model of the same provider when a daily allowance runs out, and it tells you when that happens. If you still hit the limit, use a key from Groq (free tier), or wait for the daily reset. A new key from the same Google project doesn't help, because the limit is per project.
+- **The first build is slow, and later starts are fast.** `docker compose up --build` downloads TeX Live and the embedding model, which takes a few minutes (longer on Apple Silicon or Windows, where the image may run under emulation). After that it starts in seconds. Your data lives in a Docker volume and survives restarts. `docker compose down -v` wipes it.
+
+**A five-minute tour**
+
+1. Click **Try the demo**, add your model key when asked, and open **My context** to see the sample resume and background.
+2. Paste any job description on **New tailoring** and watch the pipeline run.
+3. On the result page, read the ATS score before and after, tick or untick changes to watch the estimate move, then **Apply my choices** to rebuild the PDF.
+4. In the panel for skills the job asks for that your resume doesn't show, tick the ones you have and add them to your Skills lines in one click. Tell the assistant about anything you actually built, and it writes a bullet or a new project from your own words.
+5. Download the PDF, the `.tex`, or open it in Overleaf.
+
+**Troubleshooting**
+
+| You see | Why, and what to do |
+|---|---|
+| "Rate limit or quota reached" | The free daily allowance for that model is used up. The app tries other models first; if it still fails, wait for the reset or use another provider's key. |
+| "Provider is busy (503)" | The provider is overloaded, not your key. TailorTeX retries and then falls back to another model. Try again in a minute. |
+| No PDF, only `.tex` | LaTeX isn't installed (running from source). Docker includes it; from source, install TinyTeX (see Quick start). |
+| "Your resume doesn't compile" | The source has an error. The app offers a one-click fix for common ones, and repairs a broken original before tailoring. |
+| Port 8000 or 5432 already in use | Stop the other service, or pick another port: `PORT=8010 docker compose up` (Docker) or `make start PORT=8010` (from source). |
+| Stuck or odd state after an upgrade | `docker compose down -v && docker compose up --build` starts from a clean database. |
+
 **Sign-in on a fresh clone.** The Firebase settings are public identifiers kept in a git-ignored `.env`, so they are not in this repository, and you don't need them. With none set, the app uses its own email and password sign-up (passwords stored as scrypt hashes, session cookie in the browser), and the demo button needs no sign-in at all. Everything else behaves the same. To use Google sign-in and verified-email accounts as the hosted version would, see [Sign-in](#sign-in).
 
 **Not deployed.** There is no hosted instance: it runs locally or in Docker. Nothing here is a mock: the parser, validators, LaTeX compiler and ATS scoring all run for real, and `make test` runs 440 backend tests, including real LaTeX compiles (and real PostgreSQL when `TAILORTEX_TEST_DATABASE_URL` is set).
