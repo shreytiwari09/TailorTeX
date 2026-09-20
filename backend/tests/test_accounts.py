@@ -196,13 +196,13 @@ def test_context_links_linkedin_notes_edit_delete(client, monkeypatch):
 
     signup(client)
 
-    async def fake_best(user, n=6):
-        return [EvidenceItem(id="gh-ledgerly", source="github", title="ledgerly", text="Bookkeeping API in Go on Kubernetes.", skills=["Go", "Kubernetes"])]
+    async def fake_best(user):
+        return [EvidenceItem(id="gh-ledgerly", source="github", title="ledgerly", text="Bookkeeping API in Go on Kubernetes.", skills=["Go", "Kubernetes"])], []
 
     async def fake_fetch(url):
         return url, "<html><body><h1>Projects</h1><p>ChatRelay: a real-time chat server with WebSockets and Redis, used by 300 students.</p></body></html>"
 
-    monkeypatch.setattr(account, "best_repos", fake_best)
+    monkeypatch.setattr(account, "all_or_choice", fake_best)
     monkeypatch.setattr(account, "fetch_page", fake_fetch)
     r = client.post("/api/profile/context/links", json={"github": "asha", "portfolio": "asha.dev"}).json()
     assert [x["added"] for x in r["results"]] == [1, 1] and all(x["error"] is None for x in r["results"])
@@ -211,7 +211,7 @@ def test_context_links_linkedin_notes_edit_delete(client, monkeypatch):
     li = client.post("/api/profile/context/linkedin", json={"text": "Software Engineer at Finch Payments.\n\nBuilt Kafka consumers in Python for settlement events. Migrated 12 services to Kubernetes."})
     assert li.status_code == 200 and li.json()["added"] >= 1
 
-    r = client.put("/api/profile/notes", json={"notes": "Won 2nd place at DevHacks 2025\nLed the robotics club"}).json()
+    r = client.put("/api/profile/notes", json={"notes": "Won 2nd place at DevHacks 2025\n\nLed the robotics club"}).json()
     ids = {e["id"] for e in r["entries"]}
     assert {"gh-ledgerly", "n1", "n2"} <= ids and any(i.startswith("pf") for i in ids) and any(i.startswith("li") for i in ids)
     assert all(v for (v,) in db_rows("select embedding is not null from evidence_items"))
@@ -278,7 +278,7 @@ def test_runs_use_stored_context_are_saved_and_private(client, monkeypatch):
 @needs_db
 def test_delete_account_removes_everything(client):
     signup(client)
-    client.put("/api/profile/notes", json={"notes": "One\nTwo"})
+    client.put("/api/profile/notes", json={"notes": "One\n\nTwo"})
     assert db_rows("select count(*) from evidence_items")[0][0] == 2
     assert client.delete("/api/profile").json()["deleted"]
     assert db_rows("select count(*) from profiles")[0][0] == 0
@@ -496,3 +496,71 @@ def test_signing_key_set_is_cached_refetches_rarely_and_reports_network_errors(m
     calls.extend([None] * (98 - len(calls)))  # the next fetch is the failing one
     with pytest.raises(jwt.PyJWKClientError, match="couldn't fetch"):
         fresh.get_signing_key_from_jwt(token)
+
+
+# --- choosing which repositories speak for you --------------------------------------------------------
+
+
+@needs_db
+def test_many_repos_are_offered_for_choosing_instead_of_picking_for_you(client, monkeypatch):
+    from tailortex.api import account
+    from tailortex.evidence import github
+    from tailortex.types import EvidenceItem
+
+    signup(client)
+    repos = [{"name": f"repo{i}", "description": f"Project {i}", "language": "Python", "topics": [], "stars": i,
+              "fork": False, "url": f"https://github.com/asha/repo{i}", "pushed_at": f"2026-01-{i:02d}T00:00:00Z"} for i in range(1, 13)]
+
+    async def fake_list(user):
+        return repos
+
+    imported = []
+
+    async def fake_import(user, names, known=None):
+        imported.append(list(names))
+        return [EvidenceItem(id=f"gh-{n}", source="github", title=n, text=f"{n} does things.", skills=["Python"]) for n in names]
+
+    monkeypatch.setattr(github, "list_repos", fake_list)
+    monkeypatch.setattr(account.core, "import_repos", fake_import)
+
+    # 12 repos is more than the app will pick for you: it hands back the whole list and imports nothing
+    r = client.post("/api/profile/context/links", json={"github": "asha"}).json()["results"][0]
+    assert r["error"] is None and r["added"] == 0
+    assert r["choose"]["user"] == "asha" and len(r["choose"]["repos"]) == 12
+    assert [x["name"] for x in r["choose"]["repos"]][:3] == ["repo12", "repo11", "repo10"]  # most stars first
+    assert imported == [] and client.get("/api/profile/context").json()["entries"] == []
+
+    # the person picks, and only those are read
+    picked = ["repo12", "repo3"]
+    out = client.post("/api/profile/context/github", json={"user": "asha", "repos": picked}).json()
+    assert out["added"] == 2 and imported == [picked]
+    assert {e["id"] for e in out["entries"]} == {"gh-repo12", "gh-repo3"}
+    assert client.get("/api/profile").json()["details"]["links"]["github"] == "asha"  # the link they typed is kept
+
+    # picking again replaces the earlier import rather than piling up
+    client.post("/api/profile/context/github", json={"user": "asha", "repos": ["repo1"]})
+    assert {e["id"] for e in client.get("/api/profile/context").json()["entries"]} == {"gh-repo1"}
+    assert client.post("/api/profile/context/github", json={"user": "asha", "repos": []}).status_code == 400
+
+
+@needs_db
+def test_a_handful_of_repos_are_all_imported_without_asking(client, monkeypatch):
+    from tailortex.api import account
+    from tailortex.evidence import github
+    from tailortex.types import EvidenceItem
+
+    signup(client)
+    repos = [{"name": f"repo{i}", "description": "", "language": None, "topics": [], "stars": 0, "fork": False,
+              "url": f"https://github.com/asha/repo{i}", "pushed_at": "2026-01-01T00:00:00Z"} for i in range(1, 4)]
+    repos.append({**repos[0], "name": "someone-elses", "fork": True})
+
+    async def fake_list(user):
+        return repos
+
+    async def fake_import(user, names, known=None):
+        return [EvidenceItem(id=f"gh-{n}", source="github", title=n, text=f"{n}.", skills=[]) for n in names]
+
+    monkeypatch.setattr(github, "list_repos", fake_list)
+    monkeypatch.setattr(account.core, "import_repos", fake_import)
+    r = client.post("/api/profile/context/links", json={"github": "asha"}).json()["results"][0]
+    assert r["added"] == 3 and "choose" not in r  # forks aren't your work

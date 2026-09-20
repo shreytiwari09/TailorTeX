@@ -25,7 +25,7 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **Never invents.** Validators check every edit: a bullet can only mention tools and numbers from its own job entry or from your context. Rejected edits go back to the model with the reason, and you see them.
 - **Honest ATS checks.** Keyword coverage and parse health are measured on the text extracted from the compiled PDF, the way an ATS reads it. Each run ends with prioritized recommendations.
 - **A permanent profile per person.** Sign in once. Your details, reference resume, model key (encrypted) and every tailored resume are saved, so you can generate resumes for different jobs again and again.
-- **A knowledge base the model draws on.** GitHub link, portfolio link, LinkedIn PDF and free-text notes become entries in PostgreSQL with pgvector embeddings. For each job, TailorTeX finds the entries closest in meaning (so "event streaming" finds your Kafka note) and only adds what those entries back.
+- **A knowledge base the model draws on.** GitHub link (every public repository; you pick which ones count if you have more than ten), portfolio link, LinkedIn PDF and free-text notes become entries in PostgreSQL with pgvector embeddings. A blank line starts a new note, so a pasted post stays whole. For each job, TailorTeX finds the entries closest in meaning (so "event streaming" finds your Kafka note) and only adds what those entries back.
 - **Review everything.** Word-level diff for every change with the reason and what backs it. Keep, revert or edit each one, then rebuild the PDF.
 - **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live. When a provider is busy, TailorTeX waits and retries while telling you why, and moves to a sibling model rather than losing the run.
 - **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each person's writing style.
@@ -154,7 +154,7 @@ Signed in (session cookie):
 |---|---|
 | `POST /api/auth/signup`, `/signin`, `/google`, `/demo`, `/signout`; `GET /api/auth/me`, `/config` | Accounts |
 | `GET/PUT /api/profile`, `PUT /api/profile/resume`, `/model`, `/notes`, `/skills`; `DELETE /api/profile` | Your details, reference resume, encrypted model key, notes, skills; delete everything |
-| `GET /api/profile/context`; `POST /api/profile/context/links`, `/linkedin`; `PATCH`/`DELETE /api/profile/context/{id}` | Your knowledge base |
+| `GET /api/profile/context`; `POST /api/profile/context/links`, `/github`, `/linkedin`; `PATCH`/`DELETE /api/profile/context/{id}` | Your knowledge base |
 | `POST /api/runs` (streamed), `GET /api/runs`, `GET/DELETE /api/runs/{id}`, `POST /api/runs/{id}/rebuild` | Tailor from your stored profile and context; history |
 
 ## Where your data is stored

@@ -164,8 +164,12 @@ class LLMClient:
             except Exception:  # a broken progress channel must never fail the run
                 pass
 
-    async def _post_chat(self, http: httpx.AsyncClient, body: dict) -> httpx.Response:
-        """One chat request, waiting out rate limits and busy servers. Returns the last response, good or not."""
+    async def _post_chat(self, http: httpx.AsyncClient, body: dict, patience: int | None = None) -> httpx.Response:
+        """One chat request, waiting out rate limits and busy servers. Returns the last response, good or not.
+
+        patience caps the extra tries for a busy server; a model we're only trying as a stand-in gets a short one,
+        so a run doesn't spend a minute on each candidate before moving on.
+        """
         label = self.info.label
         json_mode_dropped = False
         attempt = 0
@@ -182,6 +186,8 @@ class LLMClient:
                 continue
             # 429 is a rate limit (a minute usually clears it) and gets fewer tries than a busy server
             tries = len(BACKOFF) if r.status_code in OVERLOADED else 2 if r.status_code == 429 else 0
+            if patience is not None:
+                tries = min(tries, patience)
             if attempt >= tries:
                 return r
             wait = min(_retry_after(r) or BACKOFF[attempt], MAX_WAIT) + random.uniform(0, 1)
@@ -222,7 +228,7 @@ class LLMClient:
             return failed
         for other in fallback_models(self.provider, ids, self.model):
             await self._say(f"{self.model} is overloaded. Switching to {other} for this run.")
-            r = await self._post_chat(http, {**body, "model": other})
+            r = await self._post_chat(http, {**body, "model": other}, patience=1)
             if r.status_code == 200:
                 self.switched_from, self.model = self.model, other
                 return r

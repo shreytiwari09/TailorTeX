@@ -19,7 +19,7 @@ from ..db.firebase import FirebaseAuthError, project_id as firebase_project, ver
 from ..db.google import GoogleAuthError, client_id, verify
 from ..db.models import Profile
 from ..db.rank import make_ranker
-from ..evidence.github import GitHubError, best_repos
+from ..evidence.github import AUTO_IMPORT, MAX_IMPORT, GitHubError, all_or_choice
 from ..evidence.links import classify
 from ..evidence.sources import SourceError, fetch_page, html_to_text, pdf_to_text
 from ..learn.bandit import Bandit
@@ -294,6 +294,12 @@ class LinksIn(BaseModel):
     portfolio: str | None = Field(default=None, max_length=500)
 
 
+class GitHubPickIn(BaseModel):
+    user: str = Field(max_length=100)
+    repos: list[str] = Field(max_length=MAX_IMPORT)
+    replace: bool = True  # a fresh pick replaces what was imported from GitHub before
+
+
 class LinkedInIn(BaseModel):
     pdf_base64: str | None = Field(default=None, max_length=7_000_000)
     text: str | None = Field(default=None, max_length=60_000)
@@ -329,8 +335,18 @@ async def add_links(body: LinksIn, request: Request, profile: Profile = Depends(
             if kind == "github":
                 if found not in ("github_user", "github_repo"):
                     raise GitHubError("That doesn't look like a GitHub profile link.")
-                items = await best_repos(info["user"]) if found == "github_user" else await core.import_repos(info["user"], [info["repo"]])
-                saved = await repo.replace_source(db, profile, "github", items)
+                if found == "github_user":
+                    items, choose = await all_or_choice(info["user"])
+                    if choose:  # too many to import blindly: the person picks which ones speak for them
+                        out["choose"] = {"user": info["user"], "repos": choose, "max": MAX_IMPORT}
+                        out["error"] = None
+                        links[kind] = raw.strip()
+                        results.append(out)
+                        continue
+                    saved = await repo.replace_source(db, profile, "github", items, exact=True)
+                else:
+                    items = await core.import_repos(info["user"], [info["repo"]])
+                    saved = await repo.replace_source(db, profile, "github", items)
             else:
                 if found != "portfolio":
                     raise SourceError("That doesn't look like a website address.")
@@ -346,6 +362,23 @@ async def add_links(body: LinksIn, request: Request, profile: Profile = Depends(
         results.append(out)
     profile.links = links
     return {"results": results, "notes": ex.notes, "entries": [e.model_dump() for e in await repo.list_context(db, profile)]}
+
+
+@router.post("/profile/context/github")
+async def pick_repos(body: GitHubPickIn, request: Request, profile: Profile = Depends(current), db: AsyncSession = Depends(db_session)):
+    """Import the repos the person chose after being shown the full list."""
+    core.rate_limit(request, "github")
+    if not body.repos:
+        raise HTTPException(400, "Choose at least one repository.")
+    try:
+        items = await core.import_repos(body.user, body.repos)
+    except GitHubError as e:
+        raise HTTPException(400, str(e)) from None
+    saved = await repo.replace_source(db, profile, "github", items, exact=True) if body.replace else await repo.add_source(db, profile, "github", items)
+    links = dict(profile.links or {})
+    links.setdefault("github", f"github.com/{body.user}")
+    profile.links = links
+    return {"added": len(saved), "entries": [e.model_dump() for e in await repo.list_context(db, profile)]}
 
 
 @router.post("/profile/context/linkedin")

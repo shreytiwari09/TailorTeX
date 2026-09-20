@@ -1,8 +1,8 @@
 import { useRef, useState } from 'react'
 import type { Evidence } from '../api'
-import { noteLines } from './format'
+import { noteBlocks } from './format'
 import { sourceOf, type FilterKey, type Knowledge } from './knowledge'
-import { Badge, Button, Icon, Notice, TextArea, TextInput } from './ui'
+import { Badge, Button, Card, Icon, Notice, TextArea, TextInput } from './ui'
 
 // --- how each kind of entry looks -----------------------------------------------------------------
 
@@ -111,6 +111,73 @@ export function LinkAdder({ kind, k, autoFocus }: { kind: 'github' | 'portfolio'
   )
 }
 
+/** Everyone's repo list, so they choose what speaks for them instead of the app guessing. */
+export function RepoPicker({ k }: { k: Knowledge }) {
+  const choice = k.repoChoice
+  // Keyed by the list, so a new list starts the picker fresh instead of an effect resetting it.
+  return choice ? <RepoList key={`${choice.user}:${choice.repos.length}`} k={k} choice={choice} /> : null
+}
+
+function RepoList({ k, choice }: { k: Knowledge; choice: NonNullable<Knowledge['repoChoice']> }) {
+  const [picked, setPicked] = useState<string[]>(() => choice.repos.slice(0, Math.min(6, choice.max)).map((r) => r.name))
+  const [query, setQuery] = useState('')
+
+  const full = picked.length >= choice.max
+  const q = query.trim().toLowerCase()
+  const shown = q ? choice.repos.filter((r) => `${r.name} ${r.description} ${r.language ?? ''}`.toLowerCase().includes(q)) : choice.repos
+  const toggle = (name: string) => setPicked((p) => (p.includes(name) ? p.filter((x) => x !== name) : full ? p : [...p, name]))
+
+  return (
+    <Card className="flex flex-col gap-space-md p-space-lg">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="font-headline-sm text-headline-sm text-on-surface">Choose your repositories</h3>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">
+            {choice.repos.length} public repositories under {choice.user}. Pick the ones you'd defend in an interview, up to {choice.max}.
+          </p>
+        </div>
+        <Badge tone={full ? 'warn' : 'accent'}>{picked.length} of {choice.max}</Badge>
+      </div>
+      {choice.repos.length > 8 && (
+        <TextInput value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter by name, description or language" aria-label="Filter repositories" spellCheck={false} />
+      )}
+      <ul className="-mx-1 flex max-h-[340px] flex-col gap-1 overflow-y-auto px-1">
+        {shown.map((r) => {
+          const on = picked.includes(r.name)
+          return (
+            <li key={r.name}>
+              <label className={`flex cursor-pointer items-start gap-3 rounded-lg p-2.5 transition-colors ${on ? 'bg-primary-fixed/25' : 'hover:bg-surface-container-low'} ${!on && full ? 'opacity-50' : ''}`}>
+                <input type="checkbox" checked={on} disabled={!on && full} onChange={() => toggle(r.name)} className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-primary)]" />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="font-code-sm text-code-sm font-semibold text-on-surface">{r.name}</span>
+                    {r.language && <Badge tone="neutral">{r.language}</Badge>}
+                    {r.stars > 0 && <span className="inline-flex items-center gap-0.5 font-code-sm text-code-sm text-tertiary"><Icon name="star" fill className="text-[13px]" />{r.stars}</span>}
+                    {r.pushed_at && <span className="font-code-sm text-code-sm text-outline">{r.pushed_at.slice(0, 7)}</span>}
+                  </span>
+                  {r.description && <span className="line-clamp-2 font-body-sm text-body-sm text-on-surface-variant">{r.description}</span>}
+                </span>
+              </label>
+            </li>
+          )
+        })}
+        {!shown.length && <li className="p-2.5 font-body-sm text-body-sm text-on-surface-variant">Nothing matches that.</li>}
+      </ul>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-body-sm text-body-sm text-on-surface-variant">
+          Each repository's README and languages are read. {full ? `That's the most GitHub allows in one go.` : ''}
+        </span>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => k.setRepoChoice(null)}>Not now</Button>
+          <Button disabled={!picked.length || !!k.busy} loading={!!k.busy} onClick={() => void k.pickRepos(picked)}>
+            <Icon name="download" className="text-[18px]" /> Add {picked.length || ''}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export function LinkedInAdder({ k }: { k: Knowledge }) {
   const ref = useRef<HTMLInputElement>(null)
   const [drag, setDrag] = useState(false)
@@ -131,9 +198,9 @@ export function LinkedInAdder({ k }: { k: Knowledge }) {
 
 export function NoteAdder({ k, rows = 4, inputRef }: { k: Knowledge; rows?: number; inputRef?: React.RefObject<HTMLTextAreaElement | null> }) {
   const [draft, setDraft] = useState('')
-  const lines = noteLines(draft)
+  const blocks = noteBlocks(draft)
   const save = async () => {
-    if (lines.length && (await k.addNotes(draft))) setDraft('')
+    if (blocks.length && (await k.addNotes(draft))) setDraft('')
   }
   return (
     <div className="flex flex-col gap-2">
@@ -149,14 +216,14 @@ export function NoteAdder({ k, rows = 4, inputRef }: { k: Knowledge; rows?: numb
           }
         }}
         aria-label="Add notes about yourself"
-        placeholder={"One fact or accomplishment per line, in your own words.\nAt Finch Payments I built Kafka consumers for settlement events\nWon 2nd place at DevHacks 2025 with a Flutter app"}
+        placeholder={"Write about yourself in your own words: a project, a role, a win, or a post you've written.\n\nLeave a blank line between separate topics. Everything in one paragraph is kept together, so a long post stays whole."}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={!lines.length || !!k.busy} loading={k.busy === 'Saving…'} onClick={save}>
-          <Icon name="save" className="text-[18px]" /> {lines.length ? `Save ${lines.length} ${lines.length === 1 ? 'note' : 'notes'}` : 'Save'}
+        <Button disabled={!blocks.length || !!k.busy} loading={k.busy === 'Saving…'} onClick={save}>
+          <Icon name="save" className="text-[18px]" /> {blocks.length ? `Save ${blocks.length} ${blocks.length === 1 ? 'entry' : 'entries'}` : 'Save'}
         </Button>
         <span className="font-body-sm text-body-sm text-on-surface-variant">
-          <kbd className="rounded bg-surface-container px-1.5 py-0.5 font-code-sm text-code-sm">⌘/Ctrl + Enter</kbd> also saves
+          A blank line starts a new entry · <kbd className="rounded bg-surface-container px-1.5 py-0.5 font-code-sm text-code-sm">⌘/Ctrl + Enter</kbd> saves
         </span>
       </div>
     </div>

@@ -54,7 +54,8 @@ export type RunSummary = {
   filename: string | null
 }
 export type SavedRun = Result & { saved_run_id: string; jd: string }
-export type LinkImport = { source: string; link: string; added: number; error: string | null }
+export type RepoChoice = { name: string; description: string; language: string | null; topics: string[]; stars: number; fork: boolean; url: string; pushed_at: string | null }
+export type LinkImport = { source: string; link: string; added: number; error: string | null; choose?: { user: string; repos: RepoChoice[]; max: number } }
 export type ModelList = { model: Profile['model']; models: { id: string; label: string }[]; recommended: string | null }
 
 export const acct = {
@@ -76,6 +77,7 @@ export const acct = {
 
   context: () => req<{ entries: Evidence[]; notes: string; skills: string[] }>('GET', '/api/profile/context'),
   addLinks: (b: { github?: string; portfolio?: string }) => req<{ results: LinkImport[]; notes: string[]; entries: Evidence[] }>('POST', '/api/profile/context/links', b),
+  pickRepos: (user: string, repos: string[]) => req<{ added: number; entries: Evidence[] }>('POST', '/api/profile/context/github', { user, repos }),
   addLinkedIn: (b: { pdf_base64?: string; text?: string }) => req<{ added: number; notes: string[]; entries: Evidence[] }>('POST', '/api/profile/context/linkedin', b),
   saveNotes: (notes: string) => req<{ entries: Evidence[]; notes: string }>('PUT', '/api/profile/notes', { notes }),
   saveSkills: (skills: string[]) => req<{ skills: string[] }>('PUT', '/api/profile/skills', { skills }),

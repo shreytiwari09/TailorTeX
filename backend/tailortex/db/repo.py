@@ -277,14 +277,26 @@ async def _free_ids(db: AsyncSession, profile: Profile, items: list[EvidenceItem
     return out
 
 
-async def replace_source(db: AsyncSession, profile: Profile, source: str, items: list[EvidenceItem], url: str | None = None) -> list[EvidenceItem]:
-    """A fresh import from one place replaces what was imported from that place before."""
+async def replace_source(db: AsyncSession, profile: Profile, source: str, items: list[EvidenceItem], url: str | None = None, exact: bool = False) -> list[EvidenceItem]:
+    """A fresh import from one place replaces what was imported from that place before.
+
+    exact=True means these items are the whole set for this source (someone chose them), so anything else
+    from that source goes. Otherwise a single repo or page only replaces its own entry.
+    """
     q = delete(EvidenceRow).where(EvidenceRow.profile_id == profile.id, EvidenceRow.source == source)
     if source == "portfolio" and url:
         q = q.where(EvidenceRow.url == url)
-    if source == "github":
+    if source == "github" and not exact:
         q = q.where(EvidenceRow.ext_id.in_([i.id for i in items]))
     await db.execute(q)
+    items = await _free_ids(db, profile, items)
+    await _write(db, profile, items)
+    profile.updated_at = datetime.now(timezone.utc)
+    return items
+
+
+async def add_source(db: AsyncSession, profile: Profile, source: str, items: list[EvidenceItem]) -> list[EvidenceItem]:
+    """Add to what was imported from one place, keeping what's already there."""
     items = await _free_ids(db, profile, items)
     await _write(db, profile, items)
     profile.updated_at = datetime.now(timezone.utc)

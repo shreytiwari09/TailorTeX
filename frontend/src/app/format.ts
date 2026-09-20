@@ -17,10 +17,24 @@ export async function toBase64(file: File): Promise<string> {
   return btoa(bin)
 }
 
-/** One fact per non-empty line, the same split the server makes for notes. */
-export function noteLines(notes: string): string[] {
+/** One entry per blank-line-separated block, the same split the server makes for notes. */
+export function noteBlocks(notes: string): string[] {
   return notes
-    .split('\n')
-    .map((l) => l.replace(/^\s*(?:[-*•·]|\d+[.)])\s*/, '').trim())
+    .split(/\n\s*\n+/)
+    .map((block) =>
+      block
+        .split('\n')
+        .map((l) => l.replace(/^\s*(?:[-*\u2022\u00b7]|\d+[.)])\s*/, '').trim())
+        .filter(Boolean)
+        .join('\n'),
+    )
     .filter(Boolean)
+}
+
+/** A short name for an entry: its first sentence or line, shortened. */
+export function blockTitle(text: string): string {
+  const first = text.trim().split('\n')[0] ?? ''
+  const sentence = first.split(/(?<=[.!?])\s/)[0]?.trim() || first
+  const head = sentence.length <= 60 ? sentence : first
+  return head.length <= 60 ? head : head.slice(0, 58).trimEnd() + '\u2026'
 }

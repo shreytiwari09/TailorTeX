@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, type Evidence, type EvidenceSource } from '../api'
+import type { RepoChoice } from './client'
 import { acct } from './client'
-import { noteLines, toBase64 } from './format'
+import { noteBlocks, toBase64 } from './format'
 
 /** The person's knowledge base: entries, notes and confirmed skills, with the actions that change them. */
 export function useKnowledge() {
@@ -12,6 +13,8 @@ export function useKnowledge() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  // Set when someone has more repos than the app will choose between for them.
+  const [repoChoice, setRepoChoice] = useState<{ user: string; repos: RepoChoice[]; max: number } | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -52,7 +55,21 @@ export function useKnowledge() {
       setEntries(r.entries)
       const res = r.results[0]
       if (res?.error) throw new Error(res.error)
+      if (res?.choose) {
+        setRepoChoice(res.choose)
+        return `${res.choose.repos.length} repositories found. Choose the ones you'd want on a resume.`
+      }
       return `Added ${res?.added ?? 0} ${res?.added === 1 ? 'entry' : 'entries'}. ${r.notes.join(' ')}`.trim()
+    })
+
+  const pickRepos = (names: string[]) =>
+    run(`Reading ${names.length} ${names.length === 1 ? 'repository' : 'repositories'}…`, async () => {
+      const user = repoChoice?.user
+      if (!user) return
+      const r = await acct.pickRepos(user, names)
+      setEntries(r.entries)
+      setRepoChoice(null)
+      return `Added ${r.added} ${r.added === 1 ? 'repository' : 'repositories'} to your context.`
     })
 
   const addLinkedIn = (file: File) => {
@@ -80,22 +97,22 @@ export function useKnowledge() {
     })
 
   const addNotes = (text: string) => {
-    const existing = noteLines(notes)
-    const fresh = noteLines(text).filter((l) => !existing.includes(l))
+    const existing = noteBlocks(notes)
+    const fresh = noteBlocks(text).filter((b) => !existing.includes(b))
     if (!fresh.length) {
       setMessage('Those are already saved.')
       return Promise.resolve(true)
     }
-    return saveNotes([...existing, ...fresh].join('\n'), `Saved ${fresh.length} ${fresh.length === 1 ? 'note' : 'notes'}. They're indexed and ready to use.`)
+    return saveNotes([...existing, ...fresh].join('\n\n'), `Saved ${fresh.length} ${fresh.length === 1 ? 'entry' : 'entries'}. They're indexed and ready to use.`)
   }
 
   const editEntry = (entry: Evidence, c: { title?: string; text?: string; skills?: string[] }) => {
     if (/^n\d+$/.test(entry.id)) {
-      // Notes live in one text; change that line and save it again.
-      const lines = noteLines(notes)
+      // Notes live in one text; change that block and save it again. Blank lines inside would split it in two.
+      const blocks = noteBlocks(notes)
       const i = Number(entry.id.slice(1)) - 1
-      if (c.text !== undefined && lines[i] !== undefined) lines[i] = c.text.replace(/\n+/g, ' ').trim()
-      return saveNotes(lines.filter(Boolean).join('\n'), 'Note updated.')
+      if (c.text !== undefined && blocks[i] !== undefined) blocks[i] = c.text.replace(/\n\s*\n+/g, '\n').trim()
+      return saveNotes(blocks.filter(Boolean).join('\n\n'), 'Note updated.')
     }
     return run('Saving…', async () => {
       const updated = await acct.editEntry(entry.id, c)
@@ -115,7 +132,7 @@ export function useKnowledge() {
       setSkills((await acct.saveSkills(next)).skills)
     })
 
-  return { entries, notes, skills, loading, busy, error, message, setError, setMessage, refresh, addLink, addLinkedIn, addNotes, editEntry, removeEntry, saveSkills }
+  return { entries, notes, skills, loading, busy, error, message, repoChoice, setRepoChoice, setError, setMessage, refresh, addLink, pickRepos, addLinkedIn, addNotes, editEntry, removeEntry, saveSkills }
 }
 export type Knowledge = ReturnType<typeof useKnowledge>
 

@@ -284,7 +284,7 @@ def test_links_endpoint(monkeypatch):
 # --- notes and forgetting -----------------------------------------------------------------
 
 
-def test_notes_become_one_fact_per_line():
+def test_a_blank_line_starts_a_new_note_and_a_paragraph_stays_whole():
     from tailortex.evidence.notes import notes_to_evidence
 
     items = notes_to_evidence("- Led the robotics club, 12 members\n\n2. At Finch Payments I built Kafka consumers in Python.\n   \n• Speak Spanish")
@@ -294,6 +294,30 @@ def test_notes_become_one_fact_per_line():
         ("n3", "Speak Spanish"),
     ]
     assert items[1].source == "fact" and {"Kafka", "Python"} <= set(items[1].skills)
+
+
+def test_a_pasted_post_is_one_entry_not_a_pile_of_fragments():
+    """A long post has line breaks all through it; splitting on them leaves fragments that mean nothing alone."""
+    from tailortex.evidence.notes import notes_to_evidence
+
+    post = (
+        "Shipped our payments dashboard this week.\n"
+        "What made this different: every team had a say in the design.\n"
+        "We cut p95 latency from 800ms to 120ms by caching in Redis.\n"
+        "Built with React and Python."
+    )
+    items = notes_to_evidence(post + "\n\nSeparately, I mentor two juniors.")
+    assert len(items) == 2
+    assert items[0].text == post and "120ms" in items[0].text and "Redis" in items[0].skills
+    assert items[0].title == "Shipped our payments dashboard this week."  # named by its first sentence
+    assert items[1].text == "Separately, I mentor two juniors."
+
+
+def test_a_note_longer_than_the_limit_is_cut_not_split():
+    from tailortex.evidence.notes import MAX_BLOCK_CHARS, notes_to_evidence
+
+    items = notes_to_evidence("word " * 2000)
+    assert len(items) == 1 and len(items[0].text) <= MAX_BLOCK_CHARS
 
 
 def test_notes_back_a_new_bullet_but_nothing_more():

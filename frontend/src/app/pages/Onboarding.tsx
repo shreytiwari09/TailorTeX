@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, api } from '../../api'
 import { useAuth } from '../auth'
 import { acct, type Links } from '../client'
-import { EntryCard, LinkAdder, LinkedInAdder, NoteAdder, Status } from '../context'
+import { EntryCard, LinkAdder, LinkedInAdder, NoteAdder, RepoPicker, Status } from '../context'
 import { ModelEditor, ResumeEditor, type ModelChoice } from '../editors'
 import { useKnowledge } from '../knowledge'
 import { Avatar, Button, Card, Field, Icon, InfoTip, Logo, Notice, TextInput } from '../ui'
@@ -213,6 +213,7 @@ function ContextStep() {
         </Card>
       </div>
       <Status k={k} />
+      <RepoPicker k={k} />
       {k.entries.length > 0 && (
         <div>
           <div className="mb-2 font-label-md text-label-md text-on-surface-variant">{k.entries.length} {k.entries.length === 1 ? 'entry' : 'entries'} so far</div>

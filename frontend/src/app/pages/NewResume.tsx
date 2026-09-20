@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, api, streamTailor, type ProgressEvent, type Result } from '../../api'
 import { useAuth } from '../auth'
 import { acct } from '../client'
-import { noteLines } from '../format'
+import { blockTitle } from '../format'
 import { sourceOf } from '../knowledge'
 import { store } from '../storage'
 import { ModelEditor, type ModelChoice } from '../editors'
@@ -51,7 +51,7 @@ export function NewResume() {
     }
     acct.context().then((c) => {
       if (!alive) return
-      const chips = c.entries.map((e) => (sourceOf(e) === 'github' && e.url ? e.url.replace(/^https?:\/\/github\.com\//, '') : sourceOf(e) === 'notes' ? (noteLines(e.text)[0] ?? e.text).slice(0, 28) : e.title).slice(0, 34))
+      const chips = c.entries.map((e) => (sourceOf(e) === 'github' && e.url ? e.url.replace(/^https?:\/\/github\.com\//, '') : sourceOf(e) === 'notes' ? blockTitle(e.text).slice(0, 28) : e.title).slice(0, 34))
       setContext({ count: c.entries.length, chips })
     }).catch(() => undefined)
     return () => {

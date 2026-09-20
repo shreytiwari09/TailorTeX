@@ -11,6 +11,12 @@ import httpx
 from ..types import EvidenceItem
 
 API = "https://api.github.com"
+PER_PAGE = 100
+MAX_PAGES = 5  # up to 500 repos; more than anyone picks from by hand
+# Reading one repo costs two API calls (languages and README). Anonymous requests are limited to 60 an hour,
+# so importing is capped; set GITHUB_TOKEN on the server to raise the limit to 5000.
+MAX_IMPORT = 25
+AUTO_IMPORT = 10  # at most this many are imported without asking; above it, the person picks
 USERNAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 
 
@@ -41,17 +47,27 @@ def _check(r: httpx.Response, what: str) -> None:
 
 
 async def list_repos(username: str) -> list[dict]:
+    """Every public repo the person owns, newest activity first. Pages through GitHub until they run out."""
     if not USERNAME.match(username):
         raise GitHubError("That doesn't look like a GitHub username.")
+    raw: list[dict] = []
     async with httpx.AsyncClient(timeout=20.0) as http:
-        try:
-            r = await http.get(f"{API}/users/{username}/repos", params={"per_page": 100, "sort": "pushed", "type": "owner"}, headers=_headers())
-        except httpx.HTTPError:
-            raise GitHubError("Couldn't reach GitHub.") from None
-    _check(r, "user")
-    repos = []
-    for repo in r.json():
-        repos.append({
+        for page in range(1, MAX_PAGES + 1):
+            try:
+                r = await http.get(
+                    f"{API}/users/{username}/repos",
+                    params={"per_page": PER_PAGE, "page": page, "sort": "pushed", "type": "owner"},
+                    headers=_headers(),
+                )
+            except httpx.HTTPError:
+                raise GitHubError("Couldn't reach GitHub.") from None
+            _check(r, "user")
+            batch = r.json()
+            raw += batch
+            if len(batch) < PER_PAGE:
+                break
+    repos = [
+        {
             "name": repo["name"],
             "description": repo.get("description") or "",
             "language": repo.get("language"),
@@ -60,9 +76,19 @@ async def list_repos(username: str) -> list[dict]:
             "fork": repo.get("fork", False),
             "url": repo.get("html_url"),
             "pushed_at": repo.get("pushed_at"),
-        })
+        }
+        for repo in raw
+    ]
     repos.sort(key=lambda x: (x["fork"], -x["stars"], x["pushed_at"] or ""), reverse=False)
     return repos
+
+
+def rank_repos(repos: list[dict]) -> list[dict]:
+    """The person's own work, strongest first: most stars, then most recently worked on."""
+    own = [r for r in repos if not r["fork"]] or repos
+    own.sort(key=lambda r: r["pushed_at"] or "", reverse=True)
+    own.sort(key=lambda r: r["stars"], reverse=True)
+    return own
 
 
 def clean_readme(md: str, limit: int = 900) -> str:
@@ -86,21 +112,31 @@ def clean_readme(md: str, limit: int = 900) -> str:
     return text[:limit].rsplit(" ", 1)[0] if len(text) > limit else text
 
 
-async def best_repos(username: str, n: int = 6) -> list[EvidenceItem]:
-    """A user's strongest public work: their own repos, most stars first, then most recently worked on."""
-    repos = await list_repos(username)
-    own = [r for r in repos if not r["fork"]] or repos
-    own.sort(key=lambda r: r["pushed_at"] or "", reverse=True)
-    own.sort(key=lambda r: r["stars"], reverse=True)
+async def all_or_choice(username: str) -> tuple[list[EvidenceItem], list[dict]]:
+    """Import every repo when there are few; otherwise return the list so the person picks.
+
+    ([entries], []) when everything was imported, ([], [repos to choose from]) when there are too many.
+    """
+    own = rank_repos(await list_repos(username))
     if not own:
         raise GitHubError(f"{username} has no public repositories.")
-    return await import_repos(username, [r["name"] for r in own[:n]], repos)
+    if len(own) > AUTO_IMPORT:
+        return [], own
+    return await import_repos(username, [r["name"] for r in own], own), []
+
+
+async def best_repos(username: str, n: int = AUTO_IMPORT) -> list[EvidenceItem]:
+    """A user's strongest public work, imported without asking."""
+    own = rank_repos(await list_repos(username))
+    if not own:
+        raise GitHubError(f"{username} has no public repositories.")
+    return await import_repos(username, [r["name"] for r in own[:n]], own)
 
 
 async def import_repos(username: str, names: list[str], known: list[dict] | None = None) -> list[EvidenceItem]:
     if not USERNAME.match(username):
         raise GitHubError("That doesn't look like a GitHub username.")
-    names = [n for n in names if re.fullmatch(r"[A-Za-z0-9._-]{1,100}", n)][:8]
+    names = [n for n in names if re.fullmatch(r"[A-Za-z0-9._-]{1,100}", n)][:MAX_IMPORT]
     repos = {r["name"]: r for r in (known if known is not None else await list_repos(username))}
     async with httpx.AsyncClient(timeout=20.0) as http:
 

@@ -187,6 +187,21 @@ The old page (`/demo.html`) stays only as a fallback for when the server has no 
 
 **Checked with a scripted provider** (no network, no real waiting): the backoff schedule and `Retry-After`, the notices, the model switch and what it records, 429 versus a bad key, a real error on the sibling, and that the fallback list contains only stable siblings.
 
+## 16. Context that actually helps: whole notes, and every repository
+
+The first real run with a live model scored 26% → 31% must-have coverage, with **0 of 22 job keywords backed by evidence**. The context was the problem, in two ways the user spotted straight away.
+
+**Notes were being shredded.** Every newline started a new entry, so a pasted LinkedIn post became a pile of fragments: "What made this different - every team ha…" is not a fact anyone can write a resume bullet from, and it's what the ranker kept surfacing. Now **a blank line starts a new entry** and single newlines don't, so a pasted post, a paragraph about a project, or a list of related lines stays whole. The entry is named after its first sentence. The limits went from 6 000 characters total and 1 000 a line to 20 000 and 4 000 a block, because posts are long. The editor says so under the box, and the button counts entries, not lines.
+
+**Only six repositories were read.** `best_repos` took the top six by stars, one page of the API, and `import_repos` capped names at eight. Someone with 40 repositories had 34 of them invisible to the tool, including the ones that match the job. Now the list is paged through in full (up to 500), and:
+- **10 or fewer: all of them are imported**, no questions.
+- **More than 10: the whole list comes back and the person picks**, with stars, language, last push and description, a filter box, and the six strongest pre-ticked. Forks are left out; they aren't your work.
+- A pick is the complete set, so choosing again replaces the previous import instead of piling up (`replace_source(..., exact=True)`). A single repo link still only replaces its own entry.
+
+**The cap is GitHub's, not ours.** Reading one repository costs two API calls (languages and README) and anonymous requests are limited to 60 an hour, so a pick is capped at 25 and the UI says so. `GITHUB_TOKEN` on the server raises the limit to 5 000.
+
+**Also fixed:** a stand-in model used to get the full patience schedule of its own, so a run could spend a minute per candidate; it now gets one retry, and the real run that found this took 243 seconds mostly waiting.
+
 ## Test status
 
-116 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+120 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

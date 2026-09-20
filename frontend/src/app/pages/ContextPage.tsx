@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useAuth } from '../auth'
-import { EntryCard, LinkAdder, LinkedInAdder, NoteAdder, Status } from '../context'
+import { EntryCard, LinkAdder, LinkedInAdder, NoteAdder, RepoPicker, Status } from '../context'
 import { timeAgo } from '../format'
 import { sourceOf, useKnowledge, type FilterKey } from '../knowledge'
 import { Badge, Button, Card, Icon, InfoTip, Skeleton, TextInput } from '../ui'
@@ -75,11 +75,12 @@ export function ContextPage() {
           </div>
           {panel === 'linkedin' ? <LinkedInAdder k={k} /> : <LinkAdder kind={panel} k={k} autoFocus />}
           <p className="mt-2 font-body-sm text-body-sm text-on-surface-variant">
-            {panel === 'github' ? 'Your top public repositories are added; reading again replaces the earlier ones.' : panel === 'portfolio' ? 'The page is read once, and your projects and skills become entries.' : 'On LinkedIn, open your profile and click More → Save to PDF.'}
+            {panel === 'github' ? 'All your public repositories are read. If you have more than 10, you choose which ones count.' : panel === 'portfolio' ? 'The page is read once, and your projects and skills become entries.' : 'On LinkedIn, open your profile and click More → Save to PDF.'}
           </p>
         </Card>
       )}
       <Status k={k} />
+      <RepoPicker k={k} />
 
       <div className="flex flex-col items-stretch justify-between gap-space-md rounded-2xl bg-surface-container-low p-2 shadow-sm md:flex-row md:items-center">
         <div className="relative min-w-0 flex-1">
