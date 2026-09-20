@@ -570,6 +570,13 @@ async def rebuild(tex: str, ops: list[Op], analysis: JobAnalysis, evidence: list
     warnings += [f"{v.op.describe()}: {v.message}" for v in result.violations]
     compiled = await compile_async(new_tex) if compile_pdf and tex_available() else None
     if compiled and not compiled.ok:
+        # A run saved before the resume was fixed still holds the broken source. Repair it here too, so
+        # pressing Apply gives a PDF instead of failing on the same line.
+        repaired = await _repair_original(new_tex)
+        if repaired is not None:
+            new_tex, compiled, note = repaired
+            warnings.append(note)
+    if compiled and not compiled.ok:
         warnings.append("The edited file didn't compile: " + (compiled.errors[0].message if compiled.errors else "unknown error"))
     new_doc = parse_resume(new_tex)
     metrics, cov = measure(new_doc, analysis, compiled)

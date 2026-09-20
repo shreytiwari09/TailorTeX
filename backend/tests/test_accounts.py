@@ -683,3 +683,26 @@ def test_a_separate_project_comes_back_as_latex_and_the_answer_is_still_kept(cli
     calls = llm.plan_calls
     bad = client.post(f"/api/runs/{run_id}/answers", json={"answers": [{"term": "PyTorch", "text": text, "project": {"name": " ", "tech": []}}]})
     assert bad.status_code in (400, 422) and llm.plan_calls == calls
+
+
+@needs_db
+def test_the_dashboard_and_the_result_page_show_the_same_ats_score(client, monkeypatch):
+    """There used to be three numbers called ATS: keyword share, PDF readability and the combined score."""
+    run_id, _ = _saved_run(client, monkeypatch)
+    listed = client.get("/api/runs").json()["runs"][0]
+    saved = client.get(f"/api/runs/{run_id}").json()
+    assert listed["ats_before"] == saved["ats"]["before"] and listed["ats_after"] == saved["ats"]["after"]
+    assert 0 < listed["ats_after"] < 1  # a composite, not the must-have share (which is its own field)
+    assert listed["ats_after"] != listed["must_after"]
+
+
+@needs_db
+def test_a_run_saved_before_the_combined_score_still_gets_one(client, monkeypatch):
+    """Old runs had no `ats`; the list derives it from their stored measurements, and an update completes it."""
+    run_id, _ = _saved_run(client, monkeypatch)
+    db_exec("update runs set result = result - 'ats'")  # as if it were saved before the combined score existed
+    listed = client.get("/api/runs").json()["runs"][0]
+    assert listed["ats_before"] is not None and listed["ats_after"] is not None
+    done = client.post(f"/api/runs/{run_id}/rebuild", json={"ops": [], "compile": False}).json()
+    saved = client.get(f"/api/runs/{run_id}").json()
+    assert saved["ats"]["before"] is not None and saved["ats"]["after"] == done["ats"]  # complete, so the page never shows "NaN%"

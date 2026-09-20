@@ -46,6 +46,8 @@ export type RunSummary = {
   created_at: string
   job_title: string
   company: string | null
+  ats_before: number | null
+  ats_after: number | null
   must_before: number | null
   must_after: number | null
   health: number | null

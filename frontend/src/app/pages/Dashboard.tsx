@@ -103,7 +103,7 @@ export function Dashboard() {
       ) : (
         <div className="flex flex-col gap-4">
           {shown.map((r) => {
-            const delta = r.must_before !== null && r.must_after !== null ? Math.round((r.must_after - r.must_before) * 100) : null
+            const delta = r.ats_before !== null && r.ats_after !== null ? Math.round((r.ats_after - r.ats_before) * 100) : null
             return (
               <Card key={r.id} className="flex flex-col justify-between gap-4 p-space-lg transition-all hover:shadow-md md:flex-row md:items-center">
                 <button type="button" onClick={() => navigate(`/runs/${r.id}`)} className="min-w-0 flex-1 text-left">
@@ -115,12 +115,12 @@ export function Dashboard() {
                   <div className="font-headline-sm text-headline-sm text-on-surface">{r.job_title || 'Tailored resume'}</div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1.5 font-code-sm text-code-sm text-on-surface">
-                      Match: {pct(r.must_before)} <Icon name="arrow_forward" className="text-[14px]" /> <strong className="text-primary-container">{pct(r.must_after)}</strong>
+                      ATS score: {pct(r.ats_before)} <Icon name="arrow_forward" className="text-[14px]" /> <strong className="text-primary-container">{pct(r.ats_after)}</strong>
                       {delta !== null && delta !== 0 && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${delta > 0 ? 'bg-primary-container text-on-primary-container' : 'bg-error-container text-on-error-container'}`}>{delta > 0 ? '+' : ''}{delta}%</span>}
                     </span>
                     {r.health !== null && (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-container-low px-3 py-1.5 font-label-sm text-label-sm text-on-surface">
-                        <Icon name={r.health >= 1 ? 'check_circle' : 'warning'} fill className={`text-[16px] ${r.health >= 1 ? 'text-primary-container' : 'text-amber-600'}`} /> ATS {pct(r.health)}
+                        <Icon name={r.health >= 1 ? 'check_circle' : 'warning'} fill className={`text-[16px] ${r.health >= 1 ? 'text-primary-container' : 'text-amber-600'}`} /> {r.health >= 1 ? 'PDF readable by an ATS' : `PDF readability ${pct(r.health)}`}
                       </span>
                     )}
                   </div>

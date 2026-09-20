@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..ats.gain import ats_score
 from ..evidence.notes import notes_to_evidence
 from ..latex.parse import parse_resume
 from ..types import EvidenceItem
@@ -379,7 +380,12 @@ async def update_run_output(db: AsyncSession, run: Run, tex: str, pdf_b64: str |
     if accepted is not None:
         changed["accepted_ops"] = accepted
     if ats_after is not None:
-        changed["ats"] = {**(run.result.get("ats") or {}), "after": ats_after}
+        prev = run.result.get("ats") or {}
+        # Runs saved before the combined score existed have no "before": derive it from the same measurements.
+        before = prev.get("before")
+        if before is None and run.result.get("before"):
+            before = ats_score(run.result["before"])
+        changed["ats"] = {**prev, "before": before, "after": ats_after}
     if keywords is not None:
         changed["keywords"] = keywords  # so the page reflects the resume as it now stands
     if gap_gains is not None:
@@ -388,16 +394,33 @@ async def update_run_output(db: AsyncSession, run: Run, tex: str, pdf_b64: str |
     run.must_after = after.get("must_have")
 
 
+def run_ats(result: dict) -> tuple[float | None, float | None]:
+    """The combined ATS score before and after, the same number the result page shows.
+
+    Runs saved before it existed are scored from their stored measurements, so the dashboard and the
+    result page can never disagree about a run.
+    """
+    ats = result.get("ats") or {}
+    before, after = ats.get("before"), ats.get("after")
+    if before is None and result.get("before"):
+        before = ats_score(result["before"])
+    if after is None and result.get("after"):
+        after = ats_score(result["after"])
+    return before, after
+
+
 async def list_runs(db: AsyncSession, profile: Profile, limit: int = 100) -> list[dict]:
     rows = (await db.scalars(select(Run).where(Run.profile_id == profile.id).order_by(Run.created_at.desc()).limit(limit))).all()
-    return [
-        {
+    out = []
+    for r in rows:
+        before, after = run_ats(r.result)
+        out.append({
             "id": str(r.id), "created_at": r.created_at.isoformat(), "job_title": r.job_title, "company": r.company,
+            "ats_before": before, "ats_after": after,
             "must_before": r.must_before, "must_after": r.must_after, "health": (r.result.get("after") or {}).get("health"),
             "model": r.model, "has_pdf": r.pdf is not None, "filename": r.result.get("filename"),
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
 async def own_run(db: AsyncSession, profile: Profile, run_id: str) -> Run | None:

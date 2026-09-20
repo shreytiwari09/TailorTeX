@@ -83,3 +83,18 @@ def test_an_error_we_cannot_fix_is_reported_not_papered_over():
     result = asyncio.run(tailor(TailorInput(tex=unfixable, jd="Python, Kubernetes", evidence=EVIDENCE, compile_pdf=True), llm))
     assert result["pdf"] is None and any("doesn't compile" in w for w in result["warnings"])
     assert result["source_tex"] == unfixable  # untouched
+
+
+@needs_tex
+def test_rebuilding_a_run_saved_from_a_broken_source_repairs_it_instead_of_failing_again():
+    """A run made before the fix still holds the broken source; Apply must not fail on the same line."""
+    from tailortex.ops import Op
+    from tailortex.pipeline.tailor import rebuild
+    from tailortex.types import JobAnalysis, JobTerm
+
+    op = Op(op="rewrite", target="s1.e0.b0", text="Developed **REST APIs** in Python and Flask for merchant onboarding, used by 1,200 merchants in the first quarter")
+    out = asyncio.run(rebuild(BROKEN, [op], JobAnalysis(title="Backend", must_have=[JobTerm(term="Python", weight=3)]), [], compile_pdf=True))
+    assert out["pdf"] and out["after"]["pages"] == 1 and out["after"]["health"] is not None
+    assert "\\\\[2pt]\n" not in out["tex"].split("\\begin{center}")[1][:20]
+    assert any("starts with a line break" in w for w in out["warnings"]) and not any("didn't compile" in w for w in out["warnings"])
+    assert "REST APIs" in out["tex"]  # the person's change is still in
