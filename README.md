@@ -8,6 +8,26 @@ Built for **HackDevengers 2.0** (19–20 September 2026).
 
 **Try it without signing up:** run the app and click *Try the demo with a sample resume* on the landing page. It opens the real app in a temporary workspace with a sample resume and background; you only add your own model key. Demo workspaces are deleted after two days.
 
+## Run it in two minutes (for reviewers)
+
+You need Docker and nothing else. No account, no configuration, no API keys of ours.
+
+```sh
+git clone https://github.com/shreytiwari09/TailorTex.git
+cd TailorTex
+docker compose up --build      # first build takes a few minutes: it includes TeX Live and the embedding model
+```
+
+1. Open **http://localhost:8000** and click **Try the demo with a sample resume**. That opens the real app with a sample resume and background, no sign-up.
+2. When it asks for a model key, paste one of your own. A free Google Gemini key works: https://aistudio.google.com/app/apikey (Groq also has a free tier). Keys are encrypted in the local database and never leave your machine except to the provider you chose.
+3. Paste any job description, and read the result: the ATS score before and after, every change with the reason and what backs it, a live PDF, and a panel for the skills the job wants that your resume doesn't show.
+
+Prefer to run it from source? `make setup && make dev`, then open http://localhost:5173 (needs Python 3.11+, Node 20+, and Docker for the database).
+
+**Sign-in on a fresh clone.** The Firebase settings are public identifiers kept in a git-ignored `.env`, so they are not in this repository, and you don't need them. With none set, the app uses its own email and password sign-up (passwords stored as scrypt hashes, session cookie in the browser), and the demo button needs no sign-in at all. Everything else behaves the same. To use Google sign-in and verified-email accounts as the hosted version would, see [Sign-in](#sign-in).
+
+**Not deployed.** There is no hosted instance: it runs locally or in Docker. Nothing here is a mock: the parser, validators, LaTeX compiler and ATS scoring all run for real, and `make test` runs 440 backend tests, including real LaTeX compiles (and real PostgreSQL when `TAILORTEX_TEST_DATABASE_URL` is set).
+
 ---
 
 ## The problem

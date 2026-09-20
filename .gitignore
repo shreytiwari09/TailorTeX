@@ -29,3 +29,6 @@ data/
 
 # Local notes kept out of the repo
 _prehackathon/
+
+# Local deliverables and notes that are not part of the project
+docs/*.pptx
