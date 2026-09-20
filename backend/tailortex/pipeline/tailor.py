@@ -35,12 +35,12 @@ from ..learn.bandit import Bandit, context_key
 from ..learn.style import StyleMemory
 from ..llm.client import LLMClient, LLMError
 from ..llm.prompts import ANALYZE_SYSTEM, analyze_user, chat_system, chat_user, draft_system, draft_user, plan_system, plan_user, retry_user
-from ..llm.schemas import ChatTurn, Draft, Plan
+from ..llm.schemas import ChatTurn, Draft, Plan, SkillAdd
 from ..ops import Op
 from ..reward.reward import RewardInput, reward
 from ..evidence.answers import answer_to_evidence, next_answer_number
 from ..evidence.extract import known_skills
-from ..evidence.support import derive_evidence, find_support
+from ..evidence.support import _cosine, derive_evidence, find_support
 from ..types import Answer, EvidenceItem, JobAnalysis, ProjectInfo
 from ..validate.validate import ValidationContext, Violation, check_standalone_bullet, validate_ops
 
@@ -855,6 +855,56 @@ def _skill_ops(doc: ParsedResume, accepted: list[Op], adds, item: EvidenceItem, 
                       reason=f"You told us you have {', '.join(terms)}.", source="model"))
         notes.append(f"added {', '.join(terms)} to {block.label or 'your skills'}")
     return ops, notes, manual, refused
+
+
+async def _best_lines(doc: ParsedResume, terms: list[str], embed_fn=None) -> dict[str, str]:
+    """Which Skills line each term belongs on, decided by meaning.
+
+    "PyTorch" under "Programming Languages" reads wrong to a person even though an ATS wouldn't care, and no
+    hardcoded table of what belongs where could cover a nurse's resume or a marketer's. So each line is compared
+    with each term using the same local embedding model that indexes someone's context.
+    """
+    lines = [b for sec in doc.sections if sec.kind == "skills" for b in sec.blocks if not b.locked]
+    if len(lines) < 2:
+        return {}
+    if embed_fn is None:
+        from ..db.embed import embed as embed_fn
+    try:
+        vectors = await embed_fn([f"{b.label}: {b.text}".strip(": ") for b in lines] + list(terms))
+    except Exception:
+        log.exception("Couldn't embed the skills lines; using the first line")
+        return {}
+    lv, tv = vectors[: len(lines)], vectors[len(lines):]
+    return {t: lines[max(range(len(lines)), key=lambda i: _cosine(v, lv[i]))].id for t, v in zip(terms, tv)}
+
+
+async def add_skills(source_tex: str, analysis: JobAnalysis, evidence: list[EvidenceItem], terms: list[str], accepted: list[Op], embed_fn=None) -> dict:
+    """Put skills the person picked from the job's list straight onto their Skills lines.
+
+    No model is asked anything: they chose these terms from the list the job itself asks for, so the work is
+    finding the right line, keeping its separator, and skipping what the resume already says. This is what
+    makes "add all of them" reliable, and it is the cheapest way to raise a score, because a skill an ATS can
+    read at all counts for something even outside a bullet.
+    """
+    doc = parse_resume(source_tex)
+    item = EvidenceItem(id="picked", source="skill", title="Skills the candidate picked from this job's list", text=", ".join(terms), skills=list(terms))
+    where = await _best_lines(doc, terms, embed_fn)
+    adds = [SkillAdd(term=t, line=where.get(t, "")) for t in terms]
+    ops, notes, manual, refused = _skill_ops(doc, accepted, adds, item, terms)
+    known = next((e for e in evidence if e.id == "skills"), None)
+    placed = [t for o in ops for t in skill_items(o.text or "") if any(same_term(t, x) for x in terms)]
+    # skills put on a line earlier in this sitting are already accepted, and the new text still carries them
+    carried = [t for o in accepted if o.op == "rewrite" and doc.block(o.target) and doc.block(o.target).kind == "skills" for t in skill_items(o.text or "")]
+    confirmed = EvidenceItem(id="skills", source="skill", title="Skills the candidate can defend in an interview", skills=[*(known.skills if known else []), *carried, *placed])
+    checked = validate_ops(ops, ValidationContext(doc=doc, evidence=[*(e for e in evidence if e.id != "skills"), confirmed], analysis=analysis))
+    return {
+        "ops": [o.model_dump() for o in checked.valid],
+        "changes": describe_changes(doc, checked.valid, analysis),
+        "manual": manual,
+        "notes": notes,
+        "blocked": [*refused, *({"op": v.op.describe(), "rule": v.rule, "message": v.message, "text": v.op.text} for v in checked.violations)],
+        "skills_confirmed": placed,
+    }
 
 
 async def chat_turn(

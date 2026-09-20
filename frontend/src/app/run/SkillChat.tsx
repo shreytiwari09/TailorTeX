@@ -16,15 +16,13 @@ function say(text: string): ReactNode {
   return text.split('**').map((part, i) => (i % 2 ? <strong key={i} className="font-semibold">{part}</strong> : <Fragment key={i}>{part}</Fragment>))
 }
 
-const suggest = (g: GapGain, first = false): string =>
-  `${first ? '' : 'Next: '}**${g.term}** (${g.must ? 'required' : 'nice to have'}, worth up to ${gainLabel(g.gain)} on your ATS score). Do you have it? Tell me in your own words: that you know it, something you built with it, or that you'd rather skip it.`
-
 /**
- * A conversation about the skills the job asks for that nothing in the person's material shows.
+ * Everything this job asks for that the person's material doesn't show, in one place.
  *
- * The assistant only proposes the next skill. Whatever the person types goes to it as it is, and it works out
- * what they mean and does it: put a skill on their Skills line, write up work they did, start a new project,
- * skip, or answer a question. There is no script here, and nothing decides what a message means on this side.
+ * The list comes first and all of it at once, so they can see the whole ask and deal with it in one go:
+ * tick the skills they have and put them on their Skills lines in a click, which is a plain edit to their
+ * LaTeX and needs no model. The conversation underneath is for everything that deserves more than a list
+ * entry: work they did, a project worth writing up, or a question.
  */
 export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasModel, engine, filename, onDrafted, onAccept, onDiscard, onStored }: {
   runId: string
@@ -41,34 +39,51 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
   onStored: (e: Evidence[]) => void
 }) {
   const [handled, setHandled] = useState<string[]>([])
+  const [ticked, setTicked] = useState<string[]>(() => gaps.map((g) => g.term))
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [adding, setAdding] = useState(false)
   const [snippets, setSnippets] = useState<ProjectSnippet[]>([])
   const [manual, setManual] = useState<{ term: string; latex: string }[]>([])
   const [copied, setCopied] = useState<string | null>(null)
-  const nextId = useRef(2)
-  const [messages, setMessages] = useState<Msg[]>(() => {
-    const first = gaps[0]
-    return first
-      ? [
-          { id: 0, from: 'assistant', text: `The job asks for ${gaps.length === 1 ? 'a skill' : `${gaps.length} skills`} I couldn't find in your resume or context. I'll suggest them one at a time, most valuable first, but you steer: tell me any skill you have, something you built, or say skip. I only write what you tell me.` },
-          { id: 1, from: 'assistant', text: suggest(first, true) },
-        ]
-      : []
-  })
+  const nextId = useRef(1)
+  const [messages, setMessages] = useState<Msg[]>(() =>
+    gaps.length
+      ? [{ id: 0, from: 'assistant', text: "Tick anything above that you have and add it in one go. If you actually built something with one of them, tell me here instead: a skill inside a bullet is worth more to an ATS than one in a list, and I'll write the bullet from your own words." }]
+      : [])
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [messages, drafted.length, snippets.length, manual.length, busy])
 
-  const queue = gaps.filter((g) => !handled.includes(g.term))
-  const current = queue[0] ?? null
+  const open = gaps.filter((g) => !handled.includes(g.term))
+  const chosen = open.filter((g) => ticked.includes(g.term))
   const total = gaps.length
 
   const push = (from: Msg['from'], text: string) => {
     const id = nextId.current++
     setMessages((m) => [...m, { id, from, text }])
     return id
+  }
+
+  const done = (terms: string[]) => setHandled((h) => [...h, ...terms.filter((t) => !h.includes(t))])
+
+  /** Put the ticked skills on the Skills lines. A plain edit to their LaTeX: no model is asked anything. */
+  const addTicked = async () => {
+    if (!chosen.length || adding) return
+    setAdding(true)
+    try {
+      const r = await acct.addSkills(runId, chosen.map((g) => g.term), acceptedOps)
+      if (r.ops.length) onDrafted(r)
+      if (r.manual.length) setManual((m) => [...m, ...r.manual])
+      if (r.skills_confirmed.length) push('assistant', `Put ${r.skills_confirmed.join(', ')} on your Skills lines. Add the change below to your resume, then Apply.`)
+      for (const n of r.notes) if (!r.skills_confirmed.length) push('assistant', n)
+      done(chosen.map((g) => g.term))
+    } catch (e) {
+      push('assistant', e instanceof Error ? e.message : 'Could not add those.')
+    } finally {
+      setAdding(false)
+    }
   }
 
   const submit = async (raw: string) => {
@@ -80,20 +95,13 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
     setBusy(true)
     try {
       // what is waiting to be added counts too, so a second skill on the same line builds on the first
-      const r = await acct.chatRun(runId, text, history, current?.term ?? null, [...acceptedOps, ...drafted.map((d) => d.op)])
+      const r = await acct.chatRun(runId, text, history, null, [...acceptedOps, ...drafted.map((d) => d.op)])
       push('assistant', r.reply)
       if (r.stored) onStored(r.evidence)
       if (r.ops.length) onDrafted(r)
       if (r.projects.length) setSnippets((s) => [...s, ...r.projects])
       if (r.manual.length) setManual((m) => [...m, ...r.manual])
-      const done = [...new Set(r.handled)]
-      if (done.length) {
-        setHandled((h) => [...h, ...done.filter((t) => !h.includes(t))])
-        // the assistant only proposes the next skill once the last one is dealt with, never in the middle of a question
-        const next = gaps.find((g) => !handled.includes(g.term) && !done.some((d) => d.toLowerCase() === g.term.toLowerCase()))
-        if (next && !r.needs_more) push('assistant', suggest(next))
-        else if (!next) push('assistant', "That's every skill the job asked for that I couldn't find. You can still tell me anything else you'd like on your resume.")
-      }
+      done([...new Set(r.handled)])
     } catch (e) {
       push('assistant', e instanceof Error ? e.message : 'Something went wrong. Try again.')
     } finally {
@@ -112,19 +120,21 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
   }
 
   if (!gaps.length && !inferred.length && !drafted.length && !snippets.length) return null
+  const worth = chosen.reduce((n, g) => n + g.gain * 0.6, 0) // a skill in a list counts for less than one in a bullet
+
   return (
     <Card className="flex flex-col gap-space-md p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="flex items-center gap-2 font-headline-sm text-headline-sm text-on-surface">
-            Talk to your resume
+            What this job asks for and your resume doesn't show
             <InfoTip align="left">
-              The job asks for skills that aren't written anywhere in your resume or context. Tell the assistant what you know in your own words: that you have a skill (no project needed), something you built, or that you want to skip it. It works out what you mean and does it. It only uses what you say.
+              Tick the ones you have: they go on your Skills lines, which is a plain edit to your LaTeX. For anything you actually built, tell the assistant instead, and it writes a bullet from your own words. It only ever writes what you tell it.
             </InfoTip>
           </h2>
-          <p className="mt-0.5 font-body-sm text-body-sm text-on-surface-variant">Say anything about your skills. What you tell it becomes part of your context.</p>
+          <p className="mt-0.5 font-body-sm text-body-sm text-on-surface-variant">{open.length} of {total} still open. Everything you confirm is kept for your next resume too.</p>
         </div>
-        {total > 0 && <Badge tone="accent">{Math.min(handled.length + 1, total)} of {total}</Badge>}
+        {total > 0 && <Badge tone="accent">{total - open.length} of {total} done</Badge>}
       </div>
 
       {inferred.length > 0 && (
@@ -142,10 +152,48 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
         </div>
       )}
 
-      {!hasModel && total > 0 && <Notice tone="warn">Add a model key in Settings first: the assistant needs one to understand you.</Notice>}
+      {open.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-xl border border-outline-variant/60 p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-label-md text-label-md font-semibold text-on-surface">Tick everything you have</p>
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setTicked(gaps.map((g) => g.term))}>All</Button>
+              <Button size="sm" variant="ghost" onClick={() => setTicked([])}>None</Button>
+            </div>
+          </div>
+          <ul className="flex flex-col">
+            {open.map((g) => (
+              <li key={g.term}>
+                <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-surface-container-low">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[var(--md-sys-color-primary,#1a56db)]"
+                    checked={ticked.includes(g.term)}
+                    onChange={(e) => setTicked((t) => (e.target.checked ? [...t, g.term] : t.filter((x) => x !== g.term)))}
+                  />
+                  <span className="font-body-md text-body-md text-on-surface">{g.term}</span>
+                  <span className="font-body-sm text-body-sm text-on-surface-variant">{g.must ? 'required' : 'nice to have'}</span>
+                  <span className="ml-auto font-code-sm text-code-sm text-on-surface-variant">up to {gainLabel(g.gain)}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" loading={adding} disabled={!chosen.length} onClick={() => void addTicked()}>
+              <Icon name="playlist_add" className="text-[17px]" /> Add {chosen.length || ''} to my Skills{worth > 0.0004 ? ` (${gainLabel(worth)})` : ''}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={!chosen.length} onClick={() => done(chosen.map((g) => g.term))}>Skip these</Button>
+          </div>
+          <p className="font-body-sm text-body-sm text-on-surface-variant">
+            Adding a skill to a list is honest only if you have it. For the ones you built something with, say so below: in a bullet they are worth close to {gainLabel(chosen.reduce((n, g) => n + g.gain, 0))} instead.
+          </p>
+        </div>
+      )}
+
+      {!hasModel && total > 0 && <Notice tone="warn">Add a model key in Settings to talk to the assistant. Ticking skills above works without one.</Notice>}
 
       {total > 0 && (
-        <div className="flex max-h-[560px] flex-col gap-2.5 overflow-y-auto rounded-xl bg-surface-container-lowest p-1" aria-live="polite">
+        <div className="flex max-h-[460px] flex-col gap-2.5 overflow-y-auto rounded-xl bg-surface-container-lowest p-1" aria-live="polite">
           {messages.map((m) => (
             <div key={m.id} className={`max-w-[92%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 font-body-md text-body-md leading-relaxed ${m.from === 'assistant' ? 'self-start rounded-tl-sm bg-surface-container-low text-on-surface' : 'self-end rounded-tr-sm bg-primary text-on-primary'}`}>
               {m.from === 'assistant' ? say(m.text) : m.text}
@@ -202,12 +250,11 @@ export function SkillChat({ runId, gaps, inferred, acceptedOps, drafted, hasMode
               }
             }}
             disabled={!hasModel || busy}
-            aria-label="Tell the assistant about your skills"
-            placeholder={current ? `Tell me about ${current.term}, or anything else you'd like on your resume…` : 'Anything else you would like on your resume…'}
+            aria-label="Tell the assistant what you built"
+            placeholder={open.length ? `Built something with ${open[0].term}? Tell me what you did, in your own words…` : 'Anything else you would like on your resume…'}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" loading={busy} disabled={!input.trim() || !hasModel}><Icon name="send" className="text-[17px]" /> Send</Button>
-            {current && <Button type="button" variant="ghost" disabled={busy || !hasModel} onClick={() => void submit(`skip ${current.term}`)}>Skip {current.term}</Button>}
             <span className="font-body-sm text-body-sm text-on-surface-variant">Enter to send, Shift+Enter for a new line</span>
           </div>
         </form>

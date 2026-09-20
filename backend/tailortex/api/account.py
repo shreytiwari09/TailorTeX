@@ -30,7 +30,7 @@ from ..llm.providers import PROVIDERS, detect_provider
 from ..ops import Op
 from ..evidence.answers import answer_to_evidence, next_answer_number
 from ..ats.gain import ats_score
-from ..pipeline.tailor import TailorInput, answer_gaps, chat_turn, rebuild
+from ..pipeline.tailor import TailorInput, add_skills, answer_gaps, chat_turn, rebuild
 from ..types import Answer, EvidenceItem, JobAnalysis
 from . import main as core
 
@@ -457,6 +457,11 @@ class ChatIn(BaseModel):
     ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
 
 
+class SkillsIn(BaseModel):
+    terms: list[str] = Field(min_length=1, max_length=40)
+    ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
+
+
 class AnswersIn(BaseModel):
     answers: list[Answer] = Field(min_length=1, max_length=6)
     ops: list[Op] = Field(default_factory=list, max_length=200)  # the changes accepted so far
@@ -578,6 +583,22 @@ async def answer_run(run_id: str, body: AnswersIn, request: Request, profile: Pr
         out["evidence"] = []
         out["stored"] = False
     out["usage"] = {"model": llm.model, "calls": llm.usage.calls}
+    return out
+
+
+@router.post("/runs/{run_id}/skills")
+async def add_run_skills(run_id: str, body: SkillsIn, request: Request, profile: Profile = Depends(current), db: AsyncSession = Depends(db_session)):
+    """Add skills the person ticked from the job's own list to their Skills lines. No model call, so it always works."""
+    core.rate_limit(request, "evidence")
+    run = await repo.own_run(db, profile, run_id)
+    if run is None:
+        raise HTTPException(404, "No such resume.")
+    analysis = JobAnalysis.model_validate(run.result.get("analysis") or {})
+    context = await repo.list_context(db, profile)
+    out = await add_skills(run.source_tex, analysis, _run_evidence(profile, context, run), body.terms, body.ops)
+    if out["skills_confirmed"]:
+        have = list(profile.skills or [])
+        profile.skills = [*have, *[t for t in out["skills_confirmed"] if not any(t.lower() == h.lower() for h in have)]][:200]
     return out
 
 

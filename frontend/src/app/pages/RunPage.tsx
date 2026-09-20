@@ -14,6 +14,15 @@ import { Button, Card, Icon, Notice, Skeleton } from '../ui'
 
 type View = { tex: string; pdf: string | null; after: SavedRun['after']; warnings: string[]; ats: number | null }
 
+const opKey = (o: Op) => `${o.op}|${o.target}|${o.text ?? ''}`
+
+/** Where a line was built up in steps, only the last version counts: each already contains the ones before. */
+const latestOnly = (ops: Op[]) => {
+  const last = new Map<string, Op>()
+  for (const o of ops) if (o.op !== 'add') last.set(o.target, o)
+  return ops.filter((o) => o.op === 'add' || last.get(o.target) === o)
+}
+
 const sign = (d: Record<number, Decision>) => JSON.stringify(Object.entries(d).filter(([, v]) => v.action !== 'kept').sort(([a], [b]) => Number(a) - Number(b)))
 
 export function RunPage() {
@@ -26,7 +35,8 @@ export function RunPage() {
   const [decisions, setDecisions] = useState<Record<number, Decision>>({})
   const [built, setBuilt] = useState<Record<number, Decision>>({}) // the choices the preview currently reflects
   const [view, setView] = useState<View | null>(null)
-  const [extra, setExtra] = useState<Op[]>([]) // bullets drafted from answers, then accepted
+  const [extra, setExtra] = useState<Op[]>([]) // bullets and skills drafted in the chat, then accepted
+  const [extraGain, setExtraGain] = useState<Record<string, number>>({}) // what each of those is worth
   const [builtExtra, setBuiltExtra] = useState<Op[]>([]) // the ones the preview already includes
   const [drafted, setDrafted] = useState<Drafted[]>([])
   const [rebuilding, setRebuilding] = useState(false)
@@ -90,10 +100,9 @@ export function RunPage() {
     })
     // What the person added from the chat may replace a change already made to the same block, and where they
     // built a line up in steps, only the last version of it counts (each one already includes the earlier).
-    const latest = new Map<string, Op>()
-    for (const o of extra) if (o.op !== 'add') latest.set(o.target, o)
-    const added = extra.filter((o) => o.op === 'add' || latest.get(o.target) === o)
-    return [...base.filter((o) => o.op === 'add' || !latest.has(o.target)), ...added]
+    const added = latestOnly(extra)
+    const targets = new Set(added.filter((o) => o.op !== 'add').map((o) => o.target))
+    return [...base.filter((o) => o.op === 'add' || !targets.has(o.target)), ...added]
   }, [run, decisions, extra])
 
   const sendFeedback = useCallback(() => {
@@ -138,6 +147,7 @@ export function RunPage() {
   }
   const acceptDrafted = (d: Drafted) => {
     setExtra((x) => [...x, d.op])
+    setExtraGain((g) => ({ ...g, [opKey(d.op)]: d.change.gain ?? 0 }))
     setDrafted((list) => list.filter((y) => y !== d))
   }
 
@@ -163,7 +173,10 @@ export function RunPage() {
   // Ticking or unticking moves an estimate with no round trip: the measured score, plus the worth of
   // every change now included minus those the preview already includes.
   const included = (d: Record<number, Decision>, cid: number) => (d[cid]?.action !== 'reverted' ? 1 : 0)
-  const swing = run.changes.reduce((n, c) => n + (included(decisions, c.id) - included(built, c.id)) * (c.gain ?? 0), 0)
+  const baseSwing = run.changes.reduce((n, c) => n + (included(decisions, c.id) - included(built, c.id)) * (c.gain ?? 0), 0)
+  // What the chat added counts too: a skills line built up in steps is worth what its latest version is worth.
+  const worthOf = (ops: Op[]) => latestOnly(ops).reduce((n, o) => n + (extraGain[opKey(o)] ?? 0), 0)
+  const swing = baseSwing + worthOf(extra) - worthOf(builtExtra)
   const estimated = dirty && score.measured ? Math.max(0, Math.min(1, shownAfter + swing)) : null
 
   const must = run.keywords.filter((k) => k.must)

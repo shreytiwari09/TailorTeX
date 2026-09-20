@@ -12,7 +12,7 @@ from conftest import MockLLM
 from tailortex.compile.compile import compile_latex, tex_available
 from tailortex.latex.parse import parse_resume
 from tailortex.ops import Op
-from tailortex.pipeline.tailor import chat_turn
+from tailortex.pipeline.tailor import add_skills, chat_turn
 from tailortex.types import EvidenceItem, JobAnalysis, JobTerm
 
 JAKE = (Path(__file__).parents[1] / "tailortex" / "templates" / "jake" / "resume.tex").read_text()
@@ -160,3 +160,51 @@ def test_a_skill_the_job_never_listed_and_the_person_never_said_is_still_refused
 def test_the_reply_never_claims_an_addition_that_didnt_happen():
     out, _ = say("add it to skills", {"reply": "I have added Kubernetes to your skills.", "skills": [{"term": "Kubernetes", "line": "s0.k1"}], "handled": []}, focus=None)
     assert out["ops"] == [] and out["reply"].startswith("I didn't change your resume")
+
+
+# --- picking skills straight from the job's list, with no model in the way ----
+
+
+async def flat(texts):
+    """A stand-in for the local embedder that rates every line the same, so placement falls to the first."""
+    return [[1.0, 0.0] for _ in texts]
+
+
+async def prefers_second(texts):
+    """A stand-in that puts every term on the second Skills line."""
+    return [[0.0, 1.0] if i == 1 else [1.0, 0.0] if i == 0 else [0.0, 1.0] for i in range(len(texts))]
+
+
+def pick(terms, tex=BULLETED, accepted=None, embed=flat):
+    return asyncio.run(add_skills(tex, ANALYSIS, [], terms, accepted or [], embed_fn=embed))
+
+
+def test_picking_every_skill_the_job_wants_puts_them_all_on_the_skills_lines():
+    """"Add all of them" has to work every time, so it doesn't go through the model at all."""
+    out = pick(UNBACKED)
+    assert [o["text"] for o in out["ops"]] == ["Java \u2022 Python \u2022 C++ \u2022 PyTorch \u2022 TensorFlow \u2022 Statistics"]
+    assert out["skills_confirmed"] == ["PyTorch", "TensorFlow", "Statistics"] and not out["blocked"]
+    assert out["changes"][0]["gain"] > 0  # what it is worth is shown, and it is worth something
+
+
+def test_a_skill_already_on_the_resume_is_not_picked_twice():
+    out = pick(["Python", "PyTorch"])
+    assert [o["text"] for o in out["ops"]] == ["Java \u2022 Python \u2022 C++ \u2022 PyTorch"]
+    assert any("Python" in n for n in out["notes"])
+
+
+def test_picked_skills_build_on_changes_already_accepted():
+    first = pick(["PyTorch"])
+    second = pick(["TensorFlow"], accepted=[Op.model_validate(o) for o in first["ops"]])
+    assert [o["text"] for o in second["ops"]] == ["Java \u2022 Python \u2022 C++ \u2022 PyTorch \u2022 TensorFlow"]
+
+
+def test_a_skill_goes_on_the_line_it_fits_by_meaning_not_the_first_one():
+    """Which list a skill belongs in is decided by meaning, so no table of what is a language or a framework."""
+    out = pick(["PyTorch"], embed=prefers_second)
+    assert [(o["target"], o["text"]) for o in out["ops"]] == [("s0.k1", "LangChain \u2022 CrewAI \u2022 FAISS \u2022 PyTorch")]
+
+
+def test_when_no_skills_line_can_be_edited_the_person_gets_code_to_paste():
+    out = pick(["PyTorch"], tex=JAKE.replace("\\section{Technical Skills}", "\\section{Stack}"))
+    assert out["ops"] == [] or out["manual"]

@@ -649,3 +649,21 @@ that such a bullet can't be tailored; carrying italics and monospace through a r
 Still open: skills lines are only detected as editable in labelled-line styles (`\item \textbf{Label:}`,
 `\textbullet{}` lines, tabular rows). A plain comma paragraph under a Skills heading falls back to
 "paste this code".
+
+## 31. The whole ask at once, and a click that edits the LaTeX
+
+Three complaints, one cause. "Add all of them" added one skill; the reply said it had added them anyway; the
+ATS score didn't move. The chat asked the model to decide every addition, and the model returned one skill per
+turn, then drip-fed the rest one question at a time.
+
+- **The list comes first.** Every skill the job asks for that the person's material doesn't show is listed
+  together, ticked, with what each is worth. The conversation underneath is for work they actually did.
+- **Adding them doesn't go through a model at all** (`add_skills`, `POST /runs/{id}/skills`). It is a plain
+  edit to their LaTeX: find the right Skills line, keep its separator, skip what the resume already says. So
+  it can't half-fail, and it works with no model key.
+- **Which line a skill lands on is decided by meaning**, by the same local embedding model that indexes their
+  context, so PyTorch doesn't land under "Programming Languages" and no table of what counts as a language or
+  a framework is needed for a resume outside software.
+- **A reply can no longer claim an addition that didn't happen**: if nothing was added, it says so and why.
+- **The estimate moves when a chat change is accepted.** It only counted the suggestions from the run itself,
+  so accepting a skills line changed nothing on screen until Apply.
