@@ -237,3 +237,123 @@ def test_writing_problems_become_recommendations_with_examples():
     # a resume that passes a check isn't nagged about it
     good, _ = measure(parse_resume(JAKE), JobAnalysis(title="Backend Engineer", must_have=[JobTerm(term="Python", weight=3)]), None)
     assert not [r for r in recommendations({"after": good.to_dict(), "analysis": {}}) if r["term"] == "quantified"]
+
+
+# --- what a change is worth ---------------------------------------------------------------
+
+
+def _jd():
+    from tailortex.types import JobAnalysis, JobTerm
+
+    return JobAnalysis(
+        title="Backend Engineer",
+        must_have=[JobTerm(term="PyTorch", weight=3), JobTerm(term="Python", weight=3), JobTerm(term="Kubernetes", weight=2),
+                   JobTerm(term="PostgreSQL", weight=2), JobTerm(term="Terraform", weight=1)],
+        nice_to_have=[JobTerm(term="Kafka", weight=1), JobTerm(term="Redis", weight=1)],
+    )
+
+
+def test_a_missing_must_have_is_worth_its_share_of_the_must_have_weight():
+    """The +11% in the design: 0.40 * 3 / (3+3+2+2+1) = 0.109."""
+    from tailortex.ats.gain import term_gain
+
+    assert abs(term_gain(_jd(), "PyTorch") - 0.109) < 0.001
+    assert abs(term_gain(_jd(), "Terraform") - 0.0364) < 0.001  # a passing mention is worth a third as much
+    assert abs(term_gain(_jd(), "Kafka") - 0.075) < 0.001  # nice-to-haves share 0.15 between two terms
+    assert term_gain(_jd(), "Rust") == 0.0  # not part of this job
+
+
+def test_promoting_a_listed_skill_into_a_bullet_is_worth_forty_percent_of_a_new_one():
+    from tailortex.ats.gain import term_gain
+
+    full, promote = term_gain(_jd(), "PyTorch"), term_gain(_jd(), "PyTorch", "listed", "context")
+    assert abs(promote - full * 0.4) < 0.001
+    assert term_gain(_jd(), "PyTorch", "context", "missing") == -full  # losing it costs exactly what gaining it earns
+
+
+def test_term_gain_equals_the_real_coverage_change():
+    """Proved against the real scoring function, not by restating its formula."""
+    from tailortex.ats.coverage import TermCoverage, coverage_scores
+    from tailortex.ats.gain import term_gain
+    from tailortex.reward.reward import WEIGHTS
+
+    jd = _jd()
+
+    def must_score(overrides: dict[str, tuple[str, float]]) -> float:
+        items = [TermCoverage(t.term, t.weight, True, 0, 0, *overrides.get(t.term, ("missing", 0.0)))
+                 for t in jd.must_have]
+        return coverage_scores(items)[0]
+
+    base = must_score({})
+    for t in jd.must_have:
+        moved = must_score({t.term: ("context", 1.0)})
+        assert abs(WEIGHTS["must_have"] * (moved - base) - term_gain(jd, t.term)) < 1e-4, t.term
+
+
+def test_per_change_gains_credit_a_keyword_to_the_first_change_only():
+    from tailortex.ats.gain import per_change_gains
+    from tailortex.ops import Op
+
+    doc = parse_resume(JAKE)
+    jd = _jd()
+    first = Op(op="rewrite", target="s1.e0.b2", text="Wrote integration tests in Python and Kubernetes that raised coverage of the payouts service from 41% to 78%")
+    second = Op(op="rewrite", target="s1.e1.b2", text="Worked with the data team on Kubernetes to define the schema for event logs, reducing malformed records by 60%")
+    gains = per_change_gains(doc, [first, second], jd)
+    assert "Kubernetes" in gains[0]["terms"] and "Kubernetes" not in gains[1]["terms"]
+    assert gains[0]["gain"] > 0 and gains[1]["gain"] == 0.0  # the second adds nothing new
+
+
+def test_a_drop_that_removes_the_last_mention_scores_negative():
+    from tailortex.ats.gain import per_change_gains
+    from tailortex.ops import Op
+
+    from tailortex.types import JobAnalysis, JobTerm
+
+    # Celery appears in exactly one bullet of the sample (s1.e0.b3); PostgreSQL appears in two
+    lone = JobAnalysis(title="Backend Engineer", must_have=[JobTerm(term="Celery", weight=2), JobTerm(term="Python", weight=2)])
+    gains = per_change_gains(parse_resume(JAKE), [Op(op="drop", target="s1.e0.b3", source="fit")], lone)
+    assert gains[0]["gain"] < 0 and gains[0]["terms"] == []
+    # dropping a bullet whose keyword survives elsewhere costs nothing
+    shared = JobAnalysis(title="Backend Engineer", must_have=[JobTerm(term="PostgreSQL", weight=2)])
+    assert per_change_gains(parse_resume(JAKE), [Op(op="drop", target="s2.e0.b1", source="fit")], shared)[0]["gain"] == 0.0
+
+
+def test_gap_gains_rank_the_unbacked_skills_by_worth_and_skip_what_is_covered():
+    from tailortex.ats.gain import gap_gains
+    from tailortex.ats.coverage import gap_analysis, term_coverage
+    from tailortex.pipeline.tailor import keyword_table
+
+    doc, jd = parse_resume(JAKE), _jd()
+    gaps = gap_analysis(doc, jd, [])
+    cov = term_coverage(doc, jd)
+    found = gap_gains(jd, [g.to_dict() for g in gaps], keyword_table(cov, cov, gaps))
+    terms = [g["term"] for g in found]
+    assert "PyTorch" in terms and "Python" not in terms  # Python is already on the resume
+    assert found == sorted(found, key=lambda g: -g["gain"])
+    assert found[0]["term"] == "PyTorch" and abs(found[0]["gain"] - 0.109) < 0.001
+
+
+def test_the_displayed_score_uses_the_reward_weights_and_is_not_page_gated():
+    from tailortex.ats.gain import ats_score
+    from tailortex.reward.reward import WEIGHTS
+
+    m = {"must_have": 0.5, "nice_to_have": 0.5, "title": 1.0, "health": 1.0, "page_fill": 0.85, "quality": 0.5}
+    expected = 0.40 * 0.5 + 0.15 * 0.5 + 0.10 * 1.0 + 0.15 * 1.0 + 0.10 * 1.0 + 0.10 * 0.5
+    assert abs(ats_score(m) - expected) < 1e-4 and abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+    assert ats_score({**m, "pages": 3}) == ats_score(m)  # a long resume still has a real score
+    assert ats_score({**m, "must_have": 1.0}) > ats_score(m)
+
+
+def test_a_result_carries_the_score_the_gains_and_a_gain_per_change():
+    import asyncio
+
+    from conftest import MockLLM
+    from test_pipeline_learn import ANALYSIS, EVIDENCE, GOOD_PLAN
+    from tailortex.pipeline.tailor import TailorInput, tailor
+
+    llm = MockLLM(ANALYSIS, [GOOD_PLAN])
+    r = asyncio.run(tailor(TailorInput(tex=JAKE, jd="Python, Kubernetes, REST APIs", evidence=EVIDENCE, compile_pdf=False), llm))
+    assert set(r["ats"]) == {"before", "after"} and r["ats"]["after"] >= r["ats"]["before"]
+    assert r["gains"]["gaps"] and all(g["gain"] > 0 for g in r["gains"]["gaps"])
+    assert all("gain" in c and "terms" in c for c in r["changes"])
+    assert sum(c["gain"] for c in r["changes"]) > 0

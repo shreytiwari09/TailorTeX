@@ -344,6 +344,33 @@ fails if it ever drops below 0.9 — a canary for a new check being too harsh.
 **Note:** absolute reward values shift with this change, so a run saved before it isn't comparable. The
 bandit compares arms within a context, so its learning is unaffected.
 
+## 23. What a change is worth
+
+The result page had percentages but no way to answer "is this worth doing?". The user wanted each suggestion
+to say how much ATS it would add. `ats/gain.py` computes that from the weights the reward already uses, so
+there is one definition of the score in the codebase rather than two that can drift apart.
+
+**The formula.** A must-have is worth `0.40 x its weight / the weight of every must-have`; a nice-to-have
+draws on 0.15 the same way. Moving a keyword from *missing* to *in a bullet* earns the whole share; from
+*only in the skills list* to *in a bullet* earns 40% of it (1.0 vs 0.6); losing it costs exactly what
+gaining it earns. With must-haves weighted 3, 3, 2, 2, 1 (sum 11), adding the first is `0.40 x 3 / 11 = +10.9%`.
+
+**It is checked against the real scoring function**, not against a restatement of its formula: a test builds
+`TermCoverage` items, runs them through `coverage_scores`, and asserts the measured change matches
+`term_gain` for every must-have.
+
+**Three numbers on the result:**
+- `ats.before` / `ats.after`: one composite score using the reward weights, and **not gated on page count**
+  unlike `reward()` — a two-page resume still has a real keyword score, and this number is for showing people.
+- `changes[i].gain` and `.terms`: what each change already made is worth. Walked in order with a running
+  picture of the resume, so a keyword added by two changes is credited to the first only and the figures can
+  be summed without double counting. A change that removes a term's last mention scores negative.
+- `gains.gaps`: what each keyword nothing backs would add *if the person could back it*, biggest first. On the
+  user's own run: Generative AI +4.5%, TensorFlow, PyTorch, Scikit-Learn and Statistics +3.8% each, Computer
+  Vision +3.0%; together up to +22.7%. That list is what the "needs your input" panel will offer.
+
+Gap gains are independent estimates, not additive across a whole set, so the interface will say "up to".
+
 ## Test status
 
-149 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+157 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from ..ats.coverage import Gap, coverage_loss, coverage_scores, gap_analysis, term_coverage, title_alignment
+from ..ats.gain import ats_score, gap_gains, per_change_gains, quality_gain
 from ..ats.health import health_score, lint_source, parse_health
 from ..ats.quality import quality_report
 from ..ats.recommend import recommendations
@@ -309,12 +310,14 @@ def suggested_filename(doc: ParsedResume, analysis: JobAnalysis) -> str:
     return (name or "Resume")[:80]
 
 
-def describe_changes(doc: ParsedResume, ops: list[Op]) -> list[dict]:
+def describe_changes(doc: ParsedResume, ops: list[Op], analysis: JobAnalysis | None = None) -> list[dict]:
     out = []
+    worth = per_change_gains(doc, ops, analysis) if analysis is not None else [{"terms": [], "gain": 0.0}] * len(ops)
     for i, op in enumerate(ops):
         sec = doc.section_of(op.target)
         item = {
             "id": i, "op": op.op, "target": op.target, "reason": op.reason, "evidence": op.evidence,
+            "terms": worth[i]["terms"], "gain": worth[i]["gain"],
             "source": op.source, "section": sec.title if sec else "", "heading": "", "before": "", "after": "",
             "before_list": None, "after_list": None,
         }
@@ -414,7 +417,7 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         "before": before.to_dict(),
         "after": best.metrics.to_dict(),
         "keywords": keyword_table(before_cov, best.coverage, gaps),
-        "changes": describe_changes(doc, best.ops),
+        "changes": describe_changes(doc, best.ops, analysis),
         "ops": [o.model_dump() for o in best.ops],
         "blocked": blocked,
         "left_out": left_out,
@@ -427,6 +430,12 @@ def build_result(run_id: str, doc: ParsedResume, analysis: JobAnalysis, gaps: li
         "engine": detect_engine(doc.source),
         "usage": {"provider": llm.provider, "model": llm.model, "input_tokens": llm.usage.input_tokens, "output_tokens": llm.usage.output_tokens, "calls": llm.usage.calls},
         "warnings": warnings + best.warnings,
+    }
+    before_d, after_d = before.to_dict(), best.metrics.to_dict()
+    result["ats"] = {"before": ats_score(before_d), "after": ats_score(after_d)}
+    result["gains"] = {
+        "gaps": gap_gains(analysis, result["gaps"], result["keywords"]),
+        "quality": quality_gain(before.quality, best.metrics.quality),
     }
     result["recommendations"] = recommendations(result, {e.id: e.title or e.text[:40] for e in evidence or []})
     return result
