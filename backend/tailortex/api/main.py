@@ -371,9 +371,16 @@ def stream_tailoring(inp: TailorInput, llm: LLMClient, ranker=None, on_result=No
     async def emit(event: dict) -> None:
         await queue.put(event)
 
+    async def say(message: str) -> None:
+        await queue.put({"type": "progress", "stage": "model", "status": "info", "message": message, "data": {}})
+
     async def run() -> None:
         try:
+            llm.notify = say  # so waits and model switches reach the person
             result = await tailor(inp, llm, emit, ranker=ranker)
+            switched = getattr(llm, "switched_from", None)
+            if switched:
+                result.setdefault("warnings", []).append(f"{switched} was overloaded, so this run used {llm.model} instead.")
             if on_result is not None:
                 try:
                     await on_result(result)

@@ -13,19 +13,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from .providers import PROVIDERS, is_chat_model
+from .providers import PROVIDERS, fallback_models, is_chat_model
 
 T = TypeVar("T", bound=BaseModel)
 
 TIMEOUT = httpx.Timeout(180.0, connect=15.0)
 MAX_OUTPUT_TOKENS = 16000
+OVERLOADED = (500, 502, 503, 504, 529)  # the provider is busy or briefly down: waiting usually fixes it
+BACKOFF = (4.0, 8.0, 15.0, 25.0)  # seconds between tries, so a demand spike of a minute or so is ridden out
+MAX_WAIT = 30.0  # never wait longer than this because a provider asked us to
 
 
 class LLMError(Exception):
@@ -33,7 +38,7 @@ class LLMError(Exception):
 
     def __init__(self, message: str, kind: str = "provider"):
         super().__init__(message)
-        self.kind = kind  # auth | rate_limit | bad_request | refusal | network | invalid_output | provider
+        self.kind = kind  # auth | rate_limit | overloaded | bad_request | refusal | network | invalid_output | provider
 
 
 @dataclass
@@ -62,6 +67,9 @@ class LLMClient:
     key: str
     model: str = ""
     usage: Usage = field(default_factory=Usage)
+    # Told about waits and model switches, so the person sees why a run is taking longer. Set by the caller.
+    notify: Callable[[str], Awaitable[None]] | None = field(default=None, repr=False)
+    switched_from: str | None = field(default=None, repr=False)  # the model that was overloaded, once we moved off it
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS:
@@ -149,25 +157,47 @@ class LLMClient:
             except (ValueError, ValidationError) as e2:
                 raise LLMError(f"The model's reply didn't match the expected format ({_short(e2)}). Try another model.", "invalid_output") from None
 
+    async def _say(self, message: str) -> None:
+        if self.notify is not None:
+            try:
+                await self.notify(message)
+            except Exception:  # a broken progress channel must never fail the run
+                pass
+
+    async def _post_chat(self, http: httpx.AsyncClient, body: dict) -> httpx.Response:
+        """One chat request, waiting out rate limits and busy servers. Returns the last response, good or not."""
+        label = self.info.label
+        json_mode_dropped = False
+        attempt = 0
+        while True:
+            try:
+                r = await http.post(f"{self.info.base_url}/chat/completions", headers=self._headers(), json=body)
+            except httpx.TimeoutException:
+                raise LLMError(f"{label} took too long to answer. Try again or pick a faster model.", "network") from None
+            except httpx.HTTPError:
+                raise LLMError(f"Couldn't reach {label}. Check your connection.", "network") from None
+            if r.status_code == 400 and "response_format" in body and not json_mode_dropped:
+                body.pop("response_format")  # some models don't support JSON mode; the prompt still asks for JSON
+                json_mode_dropped = True
+                continue
+            # 429 is a rate limit (a minute usually clears it) and gets fewer tries than a busy server
+            tries = len(BACKOFF) if r.status_code in OVERLOADED else 2 if r.status_code == 429 else 0
+            if attempt >= tries:
+                return r
+            wait = min(_retry_after(r) or BACKOFF[attempt], MAX_WAIT) + random.uniform(0, 1)
+            what = "is busy" if r.status_code in OVERLOADED else "is rate limiting requests"
+            attempt += 1
+            await self._say(f"{label} {what}. Trying again in {round(wait)} seconds (try {attempt + 1} of {tries + 1}).")
+            await asyncio.sleep(wait)
+
     async def _openai_call(self, messages: list[dict], json_mode: bool) -> str:
         body: dict = {"model": self.model, "messages": messages}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         async with httpx.AsyncClient(timeout=TIMEOUT) as http:
-            for attempt in range(3):
-                try:
-                    r = await http.post(f"{self.info.base_url}/chat/completions", headers=self._headers(), json=body)
-                except httpx.TimeoutException:
-                    raise LLMError(f"{self.info.label} took too long to answer. Try again or pick a faster model.", "network") from None
-                except httpx.HTTPError:
-                    raise LLMError(f"Couldn't reach {self.info.label}. Check your connection.", "network") from None
-                if r.status_code == 400 and "response_format" in body and attempt == 0:
-                    body.pop("response_format")  # some models don't support JSON mode; the prompt still asks for JSON
-                    continue
-                if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                    await asyncio.sleep(2 * (attempt + 1))
-                    continue
-                break
+            r = await self._post_chat(http, body)
+            if r.status_code in OVERLOADED:
+                r = await self._try_other_models(http, body, r)
         if r.status_code != 200:
             raise _http_error(self.info.label, r)
         data = r.json()
@@ -183,6 +213,22 @@ class LLMClient:
         if choice.get("finish_reason") == "length":
             raise LLMError("The model ran out of output tokens before finishing. Try a model with a larger output limit.", "invalid_output")
         return content
+
+    async def _try_other_models(self, http: httpx.AsyncClient, body: dict, failed: httpx.Response) -> httpx.Response:
+        """The chosen model stayed overloaded: move to a sibling model from the same provider, and say so."""
+        try:
+            ids = [m.id for m in await self.list_models()]
+        except LLMError:
+            return failed
+        for other in fallback_models(self.provider, ids, self.model):
+            await self._say(f"{self.model} is overloaded. Switching to {other} for this run.")
+            r = await self._post_chat(http, {**body, "model": other})
+            if r.status_code == 200:
+                self.switched_from, self.model = self.model, other
+                return r
+            if r.status_code not in OVERLOADED and r.status_code != 404:
+                return r  # a real error (bad request, quota): report it rather than hide it
+        return failed
 
     # --- Anthropic ---------------------------------------------------------------
 
@@ -272,7 +318,17 @@ def _http_error(label: str, r: httpx.Response) -> LLMError:
         return LLMError(f"That {label} model isn't available to this key.", "bad_request")
     if r.status_code == 429:
         return LLMError(f"{label} rate limit or quota reached. Wait a minute, or use a different key.", "rate_limit")
+    if r.status_code in OVERLOADED:
+        return LLMError(f"{label} is overloaded right now ({r.status_code}: {msg}). TailorTeX waited and tried again, but it stayed busy. Try again in a few minutes, or pick another model in Settings.", "overloaded")
     return LLMError(f"{label} error ({r.status_code}): {msg}", "bad_request" if r.status_code < 500 else "provider")
+
+
+def _retry_after(r: httpx.Response) -> float | None:
+    """Seconds the provider asked us to wait (Retry-After), if it said."""
+    try:
+        return max(0.0, float(r.headers.get("retry-after", "")))
+    except ValueError:
+        return None
 
 
 def _scrub(msg: str) -> str:

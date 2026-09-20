@@ -10,6 +10,8 @@ class MockLLM:
 
     provider = "mock"
     model = "mock-1"
+    notify = None  # set by the streaming endpoint, like the real client
+    switched_from = None
 
     def __init__(self, analysis: dict, plans: list[dict]):
         self.analysis = analysis

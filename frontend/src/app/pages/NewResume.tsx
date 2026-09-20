@@ -273,6 +273,7 @@ function Pipeline({ events, running, error }: { events: Stamped[]; running: bool
   }, [events, running])
   const done = states.filter((s) => s.status === 'done').length
   const active = events.length > 0
+  const notice = [...events].reverse().find((e) => e.stage === 'model')?.message ?? null
 
   return (
     <Card className="p-space-lg">
@@ -306,6 +307,7 @@ function Pipeline({ events, running, error }: { events: Stamped[]; running: bool
           </li>
         ))}
       </ol>
+      {notice && running && <Notice tone="warn" icon="hourglass_top" className="mt-space-md">{notice}</Notice>}
       {error && <Notice tone="bad" className="mt-space-md">{error}</Notice>}
     </Card>
   )

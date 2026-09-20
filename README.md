@@ -27,7 +27,7 @@ Recruiters search an ATS by keyword, and job titles and skills have to match the
 - **A permanent profile per person.** Sign in once. Your details, reference resume, model key (encrypted) and every tailored resume are saved, so you can generate resumes for different jobs again and again.
 - **A knowledge base the model draws on.** GitHub link, portfolio link, LinkedIn PDF and free-text notes become entries in PostgreSQL with pgvector embeddings. For each job, TailorTeX finds the entries closest in meaning (so "event streaming" finds your Kafka note) and only adds what those entries back.
 - **Review everything.** Word-level diff for every change with the reason and what backs it. Keep, revert or edit each one, then rebuild the PDF.
-- **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live.
+- **Bring your own key** from Google Gemini, Groq, OpenAI, Anthropic, OpenRouter, Mistral or DeepSeek. The provider is detected from the key; models are listed live. When a provider is busy, TailorTeX waits and retries while telling you why, and moves to a sibling model rather than losing the run.
 - **Learns from use.** A Thompson-sampling bandit learns which tailoring strategy works for which kind of job from what people keep and revert, and it remembers each person's writing style.
 
 ## The product flow

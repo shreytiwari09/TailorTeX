@@ -174,6 +174,19 @@ The old page (`/demo.html`) stays only as a fallback for when the server has no 
 4. Put `apiKey`, `authDomain`, `projectId` and `appId` in `.env` as `FIREBASE_API_KEY`, `FIREBASE_AUTH_DOMAIN`, `FIREBASE_PROJECT_ID` and `FIREBASE_APP_ID`, then restart the backend. These are public identifiers.
 5. **Authentication → Settings → Authorized domains:** `localhost` is there already; add the deployed domain when there is one.
 
+## 15. When the provider is busy
+
+**Found by the user:** a run stopped with "Google Gemini error (503): This model is currently experiencing high demand." Gemini's free tier sheds load during spikes, and the run gave up after three quick tries about six seconds apart, which is too impatient for a spike that usually lasts under a minute.
+
+**What it does now:**
+- **Waits properly.** A busy server (500, 502, 503, 504, 529) is retried four more times, waiting 4, 8, 15 and 25 seconds, plus a little jitter so parallel candidate runs don't retry in lockstep. A `Retry-After` header wins over that schedule, capped at 30 seconds. Rate limits (429) keep two extra tries, since a quota needs a longer wait than a busy server.
+- **Says what's happening.** The wait is streamed to the person ("Google Gemini is busy. Trying again in 8 seconds (try 3 of 5)") instead of a progress bar that appears stuck. The client takes an optional `notify` callback; the streaming endpoint passes one that emits a `model` progress event.
+- **Moves to a sibling model.** If the chosen Gemini model stays overloaded, the run continues on the next stable Flash model from the same provider (never a preview or experimental build, which are the ones that run out of capacity), and the result carries a warning saying which model was used. Only Gemini: its capacity errors are the common case, and other providers' 5xx are usually real faults.
+- **A real error on the sibling is reported, not hidden.** Anything that isn't a busy or missing-model response is raised as it is.
+- **The final message is actionable** when everything stays busy: it says TailorTeX already waited and retried, and suggests trying later or picking another model.
+
+**Checked with a scripted provider** (no network, no real waiting): the backoff schedule and `Retry-After`, the notices, the model switch and what it records, 429 versus a bad key, a real error on the sibling, and that the fallback list contains only stable siblings.
+
 ## Test status
 
-109 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
+116 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.

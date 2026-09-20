@@ -98,3 +98,16 @@ def recommended_model(provider: str, ids: list[str]) -> str | None:
         if hit:
             return hit
     return ids[0]
+
+
+def fallback_models(provider: str, ids: list[str], current: str) -> list[str]:
+    """Other models from the same provider to try when the chosen one stays overloaded, best first.
+
+    Only stable names (no preview or experimental builds, which are the ones that run out of capacity), and only
+    for Google Gemini, whose "high demand" errors are the common case.
+    """
+    if provider != "google":
+        return []
+    stable = [i for i in ids if re.fullmatch(r"gemini-[\d.]+-flash(-lite)?", i) and i != current]
+    # a full Flash before a Flash-Lite, newer before older
+    return sorted(stable, key=lambda i: (i.endswith("-lite"), tuple(-v for v in _version(i))))
