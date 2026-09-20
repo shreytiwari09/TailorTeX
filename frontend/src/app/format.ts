@@ -38,3 +38,27 @@ export function blockTitle(text: string): string {
   const head = sentence.length <= 60 ? sentence : first
   return head.length <= 60 ? head : head.slice(0, 58).trimEnd() + '\u2026'
 }
+
+
+// Runs saved before the general-quality checks and gain estimates existed lack those fields,
+// so the page reads them through here instead of scattering `??` everywhere.
+import type { Change, Check, Finding, Metrics, Result } from '../api'
+
+export const qualityOf = (m: Metrics): { score: number | null; checks: Check[]; findings: Finding[] } => ({
+  score: typeof m.quality === 'number' ? m.quality : null,
+  checks: m.quality_checks ?? [],
+  findings: m.quality_findings ?? [],
+})
+
+export const gainOf = (c: Change): number => c.gain ?? 0
+
+/** The composite ATS score, when the run has one. Older runs fall back to the must-have share. */
+export const atsOf = (r: Pick<Result, 'ats' | 'before' | 'after'>): { before: number; after: number; measured: boolean } =>
+  r.ats ? { ...r.ats, measured: true } : { before: r.before.must_have, after: r.after.must_have, measured: false }
+
+/** "+4.5%" for a gain, "+0.4%" for a small one, "" for nothing. */
+export const gainLabel = (g: number): string => {
+  const p = g * 100
+  if (Math.abs(p) < 0.05) return ''
+  return `${p > 0 ? '+' : '−'}${Math.abs(p) >= 10 ? Math.round(Math.abs(p)) : Math.abs(p).toFixed(1)}%`
+}

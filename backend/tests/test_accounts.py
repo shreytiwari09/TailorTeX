@@ -616,6 +616,11 @@ def test_an_answer_is_stored_as_context_drafted_and_applied_through_rebuild(clie
     assert "PyTorch model" in saved["tex"] and saved["accepted_ops"][0]["evidence"] == ["ans1"]  # reopening remembers the choice
     assert saved["ats"]["after"] == done["ats"]
 
+    # an answer the person has just given must stop being offered as a missing skill
+    assert next(k for k in saved["keywords"] if k["term"] == "PyTorch")["after"] == "context"
+    assert "PyTorch" not in [g["term"] for g in saved["gains"]["gaps"]]
+    assert "TensorFlow" in [g["term"] for g in saved["gains"]["gaps"]]  # the ones they didn't answer still are
+
 
 @needs_db
 def test_a_second_round_gets_the_next_number_and_a_notes_save_leaves_answers_alone(client, monkeypatch):

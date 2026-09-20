@@ -1,5 +1,5 @@
 // Calls for the signed-in product. Same origin, so the session cookie goes along automatically.
-import { ApiError, type Evidence, type Outline, type Result } from '../api'
+import { ApiError, type Change, type Evidence, type Op, type Outline, type Result } from '../api'
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
@@ -53,7 +53,16 @@ export type RunSummary = {
   has_pdf: boolean
   filename: string | null
 }
-export type SavedRun = Result & { saved_run_id: string; jd: string }
+export type SavedRun = Result & { saved_run_id: string; jd: string; accepted_ops?: Op[] }
+export type AnswerIn = { term: string; text: string; target?: string | null }
+export type AnswerResult = {
+  ops: Op[]
+  changes: Change[]
+  blocked: { rule: string; message: string; text: string | null; op: string }[]
+  followups: { term: string; question: string }[]
+  superseded: string[]
+  evidence: Evidence[]
+}
 export type RepoChoice = { name: string; description: string; language: string | null; topics: string[]; stars: number; fork: boolean; url: string; pushed_at: string | null }
 export type LinkImport = { source: string; link: string; added: number; error: string | null; choose?: { user: string; repos: RepoChoice[]; max: number } }
 export type ModelList = { model: Profile['model']; models: { id: string; label: string }[]; recommended: string | null }
@@ -86,6 +95,7 @@ export const acct = {
 
   runs: () => req<{ runs: RunSummary[] }>('GET', '/api/runs'),
   run: (id: string) => req<SavedRun>('GET', `/api/runs/${id}`),
-  rebuildRun: (id: string, ops: unknown[], compile = true) => req<{ tex: string; pdf: string | null; after: Result['after']; warnings: string[] }>('POST', `/api/runs/${id}/rebuild`, { ops, compile }),
+  rebuildRun: (id: string, ops: unknown[], compile = true) => req<{ tex: string; pdf: string | null; after: Result['after']; warnings: string[]; ats?: number }>('POST', `/api/runs/${id}/rebuild`, { ops, compile }),
+  answerRun: (id: string, answers: AnswerIn[], ops: Op[]) => req<AnswerResult>('POST', `/api/runs/${id}/answers`, { answers, ops }),
   deleteRun: (id: string) => req<{ deleted: boolean }>('DELETE', `/api/runs/${id}`),
 }

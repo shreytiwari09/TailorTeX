@@ -509,7 +509,8 @@ async def rebuild_run(run_id: str, body: RunRebuildIn, request: Request, profile
         raise HTTPException(400, str(e)) from None
     out["ats"] = ats_score(out["after"])
     await repo.update_run_output(db, run, out["tex"], out["pdf"], out["after"], out["warnings"],
-                                 accepted=[o.model_dump() for o in body.ops], ats_after=out["ats"])
+                                 accepted=[o.model_dump() for o in body.ops], ats_after=out["ats"],
+                                 keywords=out["keywords"], gap_gains=out["gap_gains"])
     return out
 
 

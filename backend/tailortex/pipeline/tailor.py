@@ -541,6 +541,10 @@ async def rebuild(tex: str, ops: list[Op], analysis: JobAnalysis, evidence: list
         warnings.append("The edited file didn't compile: " + (compiled.errors[0].message if compiled.errors else "unknown error"))
     new_doc = parse_resume(new_tex)
     metrics, cov = measure(new_doc, analysis, compiled)
+    # What the resume shows now, and what is still unbacked: an answer the person has just given must
+    # stop being offered as a gap.
+    gaps = gap_analysis(new_doc, analysis, evidence)
+    keywords = keyword_table(cov, cov, gaps)
     limit = page_limit or 1
     if compiled and compiled.ok and compiled.pages > limit:
         warnings.append(f"The result is {compiled.pages} pages; the limit is {limit}. Revert an added bullet or keep a page-fit drop.")
@@ -549,6 +553,9 @@ async def rebuild(tex: str, ops: list[Op], analysis: JobAnalysis, evidence: list
         "pdf": base64.b64encode(compiled.pdf).decode() if compiled and compiled.ok and compiled.pdf else None,
         "after": metrics.to_dict(),
         "coverage": [c.to_dict() for c in cov],
+        "keywords": keywords,
+        "gaps": [g.to_dict() for g in gaps],
+        "gap_gains": gap_gains(analysis, [g.to_dict() for g in gaps], keywords),
         "applied": [o.model_dump() for o in applied],
         "warnings": warnings,
     }

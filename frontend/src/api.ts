@@ -24,7 +24,8 @@ export type Outline = {
   lint: LintIssue[]
 }
 
-export type Check = { id: string; label: string; ok: boolean; detail: string; weight: number }
+export type Check = { id: string; label: string; ok: boolean; detail: string; weight: number; score?: number | null }
+export type Finding = { check: string; block_id: string; text: string; hint: string }
 export type Metrics = {
   must_have: number
   nice_to_have: number
@@ -33,6 +34,10 @@ export type Metrics = {
   checks: Check[]
   pages: number | null
   page_fill: number | null
+  // Older saved runs were made before these existed, so every read goes through format.ts.
+  quality?: number
+  quality_checks?: Check[]
+  quality_findings?: Finding[]
 }
 export type TermStatus = 'context' | 'listed' | 'missing'
 export type Gap = { term: string; weight: number; must: boolean; status: 'present' | 'evidence' | 'missing'; evidence_ids: string[] }
@@ -70,6 +75,8 @@ export type Change = {
   after: string
   before_list: string[] | null
   after_list: string[] | null
+  terms?: string[]
+  gain?: number
 }
 export type Blocked = { attempt: number; arm: string; op: string; rule: string; message: string; text: string | null; retried: boolean }
 export type JobTerm = { term: string; weight: number }
@@ -101,6 +108,8 @@ export type Result = {
   left_out: { term: string; must: boolean; weight: number }[]
   suggestions: Suggestion[]
   recommendations?: Recommendation[]
+  ats?: { before: number; after: number }
+  gains?: { gaps: GapGain[]; quality: number }
   fit_note: string | null
   tex: string
   pdf: string | null
@@ -110,12 +119,13 @@ export type Result = {
   usage: { provider: string; model: string; input_tokens: number; output_tokens: number; calls: number }
   warnings: string[]
 }
+export type GapGain = { term: string; must: boolean; weight: number; gain: number; from: TermStatus }
 export type Recommendation = {
   priority: 'high' | 'medium' | 'low'
   group: string
   title: string
   detail: string
-  action: 'none' | 'fix_source' | 'confirm_skill' | 'use_context'
+  action: 'none' | 'fix_source' | 'confirm_skill' | 'use_context' | 'improve_writing'
   term: string | null
   evidence: string[]
 }

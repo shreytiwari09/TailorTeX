@@ -418,6 +418,47 @@ silently switched all four checks off.
 existing one. A brand-new project would need the parser to keep a heading's structure so it can be cloned.
 The interface will say this plainly instead of pretending.
 
+## 25. A result page for people, not for the pipeline
+
+**The complaint:** "too much stuff that makes users go nuts: ATS parse health, pages, title alignment, before
+and after... I don't know what's happening." The page opened with five score tiles, five tabs, and a button
+that did nothing.
+
+**What it is now**, two columns:
+- **Left:** one score (`51% -> 60%`, with a dotted "~" while a choice is pending), a plain paragraph of what
+  happened and what is left, the changes, the "skills we can't find" panel, and one collapsed *Details*.
+- **Right, sticky:** the resume itself, PDF or LaTeX, updating as choices are applied. A spinner overlay shows
+  while it rebuilds.
+
+Parse health, pages, title alignment, the keyword matrix, the writing checks and the refused edits all moved
+into the collapsed *Details behind the score*. The five tabs are gone.
+
+**Accept, not remove.** Each change is a checkbox; ticked means it is in the resume, with its own `+4.6% ATS`
+beside it. The server has already applied and compiled everything, so the PDF and the measured score are
+instant. Unticking moves an *estimate* (the measured score plus the worth of what is now in, minus what the
+preview already shows) with no round trip, and an **Apply** button rebuilds once. "Review one by one" unticks
+everything for people who want true opt-in. I chose this over a literal "nothing applied until you accept" because
+that needs the *original* PDF too: either ~250 KB more per saved run, or an extra LaTeX compile every time a run
+is opened.
+
+**"Skills the job wants that we can't find"** is where the direction change lives. Each unbacked skill carries
+`up to +3.8%`; opening it gives a text box that takes a line or a paragraph and a "where does this belong?"
+choice; **Write bullets from my answers** makes one model call for all of them. The drafted bullets appear
+*above* the list, unapplied, with "Add to my resume" or "Not this one". The panel says plainly that it only adds
+bullets to entries that already exist.
+
+**Bugs found by driving it in a real browser against real Postgres:**
+- The button was disabled unless the *person* had a saved key, but a deployment can supply its own
+  (`server_key`). The server is the right place to decide, so the client now checks both.
+- **A skill the person had just answered was still offered as missing.** The rebuild updated the score but
+  `keywords` and `gains.gaps` were snapshots from the original run. `rebuild()` now returns a refreshed keyword
+  table and gap list and the run stores them. A regression test pins it.
+- My first draft called a hook after an early return (a rules-of-hooks violation) and kept the "what the preview
+  reflects" state as JSON strings that had to be re-parsed; both are gone.
+
+**Reopening a run** now shows what the person chose (`accepted_ops` is stored), so a run they trimmed doesn't
+come back with every suggestion ticked.
+
 ## Test status
 
 175 backend tests pass with a PostgreSQL available (`TAILORTEX_TEST_DATABASE_URL`; the database tests skip without one), including real pdfLaTeX compiles, the compiler's safety checks, a full pipeline run with a scripted model, and account, privacy and ranking tests against real PostgreSQL. CI runs them with a Postgres service. The frontend type-checks, lints clean and builds.
